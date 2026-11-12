@@ -66,9 +66,12 @@ export interface AwakeState {
   power: PowerStatus;
 }
 
+export type ThemePreset = "forest" | "minimal-dark" | "minimal-light";
+
 export interface NightowlSettings {
   batteryThreshold: number;
   batterySafeStop: boolean;
   keepDisplay: boolean;
   autoAwakeForAgents: boolean;
+  theme: ThemePreset;
 }

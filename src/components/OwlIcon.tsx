@@ -1,11 +1,13 @@
 import React, { useEffect, useId, useState } from "react";
+import type { ThemePreset } from "../types";
 
 interface OwlIconProps {
   awake: boolean;
   size?: number;
+  theme?: ThemePreset;
 }
 
-export const OwlIcon: React.FC<OwlIconProps> = ({ awake, size = 22 }) => {
+export const OwlIcon: React.FC<OwlIconProps> = ({ awake, size = 24, theme = "forest" }) => {
   const clipId = useId().replace(/:/g, "");
   const [blinking, setBlinking] = useState(false);
 
@@ -26,11 +28,18 @@ export const OwlIcon: React.FC<OwlIconProps> = ({ awake, size = 22 }) => {
     };
   }, [awake]);
 
-  const open = awake ? (blinking ? 0.12 : 1) : 0.08;
-  const ry = Math.max(0.1, 3.5 * open);
-  const pupilR = Math.max(0.2, 2.0 * open);
-  const shineOpacity = Math.max(0, (open - 0.25) / 0.75);
-  const sleepOpacity = Math.max(0, (0.35 - open) / 0.35);
+  const isLight = theme === "minimal-light";
+  const strokeColor = isLight ? "#0f1a15" : "#f7fcf9";
+  const bodyFill = isLight ? "rgba(255, 255, 255, 0.88)" : "rgba(7, 17, 13, 0.72)";
+  const socketFill = isLight ? "#e6ede9" : "#040907";
+  const irisColor = isLight ? "#d97706" : "#fbbf24";
+
+  // Reference image shows calm half-lidded golden eyes at rest, wide alert eyes when awake
+  const open = awake ? (blinking ? 0.14 : 1) : 0.42;
+  const ry = Math.max(0.2, 3.4 * open);
+  const pupilR = Math.max(0.25, 1.85 * open);
+  const shineOpacity = awake ? Math.max(0, (open - 0.25) / 0.75) : 0.35;
+  const lidOpacity = awake ? Math.max(0, (0.35 - open) / 0.35) : 0.85;
 
   return (
     <svg
@@ -42,63 +51,56 @@ export const OwlIcon: React.FC<OwlIconProps> = ({ awake, size = 22 }) => {
     >
       <defs>
         <clipPath id={`${clipId}-l`}>
-          <ellipse cx="8" cy="11.5" rx="3.5" ry={ry} />
+          <ellipse cx="8" cy="11.8" rx="3.45" ry={ry} />
         </clipPath>
         <clipPath id={`${clipId}-r`}>
-          <ellipse cx="16" cy="11.5" rx="3.5" ry={ry} />
+          <ellipse cx="16" cy="11.8" rx="3.45" ry={ry} />
         </clipPath>
       </defs>
 
       <path
-        d="M3.5 6.5 L7 8.8 L12 10.2 L17 8.8 L20.5 6.5 C21.5 10.5 21 16 18 19.5 C15.5 21 8.5 21 6 19.5 C3 16 2.5 10.5 3.5 6.5 Z"
-        fill="rgba(10, 24, 18, 0.55)"
-        stroke="#eefbf4"
-        strokeWidth="1.35"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <path
-        d="M3.5 6.5 L7 8.8 L12 10.2 L17 8.8 L20.5 6.5"
-        fill="none"
-        stroke="#eefbf4"
-        strokeWidth="1.4"
+        d="M3.6 6.4 L7.2 8.7 L12 10.1 L16.8 8.7 L20.4 6.4 C21.4 10.6 20.9 16.2 18 19.6 C15.5 21 8.5 21 6 19.6 C3.1 16.2 2.6 10.6 3.6 6.4 Z"
+        fill={bodyFill}
+        stroke={strokeColor}
+        strokeWidth="1.45"
         strokeLinecap="round"
         strokeLinejoin="round"
       />
 
-      <circle cx="8" cy="11.5" r="3.7" fill="#030806" stroke="#eefbf4" strokeWidth="0.8" />
-      <circle cx="16" cy="11.5" r="3.7" fill="#030806" stroke="#eefbf4" strokeWidth="0.8" />
+      <circle cx="8" cy="11.6" r="3.65" fill={socketFill} stroke={strokeColor} strokeWidth="0.9" />
+      <circle cx="16" cy="11.6" r="3.65" fill={socketFill} stroke={strokeColor} strokeWidth="0.9" />
 
       <g clipPath={`url(#${clipId}-l)`}>
-        <circle cx="8" cy="11.5" r="3.5" fill="#fbbf24" />
-        <circle cx="8" cy="11.5" r={pupilR} fill="#050d0a" />
-        <circle cx="7.1" cy="10.4" r="0.8" fill="#ffffff" style={{ opacity: shineOpacity }} />
+        <circle cx="8" cy="11.8" r="3.4" fill={irisColor} />
+        <circle cx="8" cy="11.8" r={pupilR} fill="#050d0a" />
+        <circle cx="7.1" cy="10.8" r="0.72" fill="#ffffff" style={{ opacity: shineOpacity }} />
       </g>
       <g clipPath={`url(#${clipId}-r)`}>
-        <circle cx="16" cy="11.5" r="3.5" fill="#fbbf24" />
-        <circle cx="16" cy="11.5" r={pupilR} fill="#050d0a" />
-        <circle cx="15.1" cy="10.4" r="0.8" fill="#ffffff" style={{ opacity: shineOpacity }} />
+        <circle cx="16" cy="11.8" r="3.4" fill={irisColor} />
+        <circle cx="16" cy="11.8" r={pupilR} fill="#050d0a" />
+        <circle cx="15.1" cy="10.8" r="0.72" fill="#ffffff" style={{ opacity: shineOpacity }} />
       </g>
 
+      {/* Half-lidded / resting upper eyelid sweep */}
       <path
-        d="M4.8 11.8 Q8 14.0 11.2 11.8"
+        d="M4.6 10.4 Q8 11.4 11.4 10.4"
         fill="none"
-        stroke="#fbbf24"
-        strokeWidth="1.35"
+        stroke={irisColor}
+        strokeWidth="1.25"
         strokeLinecap="round"
-        style={{ opacity: sleepOpacity }}
+        style={{ opacity: lidOpacity }}
       />
       <path
-        d="M12.8 11.8 Q16 14.0 19.2 11.8"
+        d="M12.6 10.4 Q16 11.4 19.4 10.4"
         fill="none"
-        stroke="#fbbf24"
-        strokeWidth="1.35"
+        stroke={irisColor}
+        strokeWidth="1.25"
         strokeLinecap="round"
-        style={{ opacity: sleepOpacity }}
+        style={{ opacity: lidOpacity }}
       />
 
       <polygon
-        points="11,12.8 12,15.6 13,12.8"
+        points="11,12.9 12,16.1 13,12.9"
         fill="#f59e0b"
         stroke="#d97706"
         strokeWidth="0.45"

@@ -1,5 +1,5 @@
 import React from "react";
-import type { AgentSession, AwakeState, NightowlSettings } from "../types";
+import type { AgentSession, AwakeState, NightowlSettings, ThemePreset } from "../types";
 import { HarnessIcon, harnessDisplayName } from "./HarnessIcons";
 import { OwlIcon } from "./OwlIcon";
 
@@ -8,6 +8,7 @@ interface DiagnosticsModalProps {
   sessions: AgentSession[];
   settings: NightowlSettings;
   onToggleSetting: (key: keyof NightowlSettings, value: boolean) => void;
+  onSelectTheme: (theme: ThemePreset) => void;
   onStartQuick: (hours: number) => void;
   onStop: () => void;
   onFocusSession: (hwnd: string) => void;
@@ -26,6 +27,7 @@ export const DiagnosticsModal: React.FC<DiagnosticsModalProps> = ({
   sessions,
   settings,
   onToggleSetting,
+  onSelectTheme,
   onStartQuick,
   onStop,
   onFocusSession,
@@ -117,6 +119,27 @@ export const DiagnosticsModal: React.FC<DiagnosticsModalProps> = ({
           />
           <span>Keep screen lit during awake sessions</span>
         </label>
+        <div className="diag-theme-row">
+          <span className="diag-k">THEME PRESET</span>
+          <div className="diag-theme-pills">
+            {(
+              [
+                { id: "forest", label: "Nightowl Forest" },
+                { id: "minimal-dark", label: "Minimal Dark" },
+                { id: "minimal-light", label: "Minimal Light" },
+              ] as Array<{ id: ThemePreset; label: string }>
+            ).map((preset) => (
+              <button
+                key={preset.id}
+                type="button"
+                className={settings.theme === preset.id ? "active" : ""}
+                onClick={() => onSelectTheme(preset.id)}
+              >
+                {preset.label}
+              </button>
+            ))}
+          </div>
+        </div>
       </section>
 
       <section className="diag-card">

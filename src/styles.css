@@ -46,15 +46,15 @@ body,
   position: relative;
   display: inline-flex;
   align-items: center;
-  gap: 10px;
-  height: 46px;
-  padding: 0 16px 0 12px;
+  gap: 11px;
+  height: 48px;
+  padding: 0 18px 0 12px;
   border-radius: 999px;
-  background: linear-gradient(180deg, rgba(24, 38, 32, 0.92) 0%, rgba(10, 18, 15, 0.94) 100%);
-  border: 1px solid var(--rim);
+  background: linear-gradient(180deg, rgba(22, 37, 30, 0.94) 0%, rgba(8, 16, 13, 0.96) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.28);
   box-shadow:
-    0 10px 26px rgba(0, 0, 0, 0.52),
-    inset 0 1px 0 rgba(255, 255, 255, 0.18);
+    0 10px 26px rgba(0, 0, 0, 0.54),
+    inset 0 1px 0 rgba(255, 255, 255, 0.2);
   transition: all 0.22s cubic-bezier(0.22, 1, 0.36, 1);
   overflow: hidden;
 }
@@ -116,11 +116,11 @@ body,
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 34px;
-  height: 34px;
+  width: 40px;
+  height: 40px;
   padding: 0;
   border-radius: 50%;
-  border: 2px solid var(--yellow);
+  border: 2.2px solid var(--yellow);
   background: rgba(5, 13, 10, 0.78);
   cursor: pointer;
   transition: transform 0.18s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.18s ease;
@@ -152,7 +152,9 @@ body,
 .agent-strip.open {
   max-width: 420px;
   opacity: 1;
-  margin-right: 2px;
+  overflow: visible;
+  padding: 6px 2px;
+  margin: -6px 2px -6px 0;
 }
 
 .agent-btn {
@@ -618,4 +620,174 @@ body,
 .diag-sess-meta {
   font: 400 11.5px var(--ui);
   color: var(--muted);
+}
+
+/* ---- Theme Preset Controls & Overrides ---- */
+
+.tray-theme-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+  padding: 4px 6px;
+}
+
+.tray-menu .tray-theme-pill {
+  justify-content: center;
+  padding: 5px 4px;
+  font: 500 11px var(--ui);
+  border-radius: 6px;
+  border: 1px solid rgba(167, 243, 208, 0.14);
+  color: var(--muted);
+  text-align: center;
+}
+
+.tray-menu .tray-theme-pill.active {
+  background: rgba(251, 191, 36, 0.16);
+  border-color: rgba(251, 191, 36, 0.5);
+  color: var(--yellow);
+}
+
+.diag-theme-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px 12px;
+  border-top: 1px solid rgba(167, 243, 208, 0.12);
+}
+
+.diag-theme-pills {
+  display: flex;
+  gap: 8px;
+}
+
+.diag-theme-pills button {
+  flex: 1;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(167, 243, 208, 0.22);
+  background: rgba(5, 13, 10, 0.75);
+  color: var(--text);
+  font: 500 12px var(--ui);
+  cursor: pointer;
+}
+
+.diag-theme-pills button.active {
+  border-color: var(--yellow);
+  background: rgba(251, 191, 36, 0.15);
+  color: var(--yellow);
+}
+
+/* Preset 2: Minimal Dark */
+[data-theme="minimal-dark"] .capsule {
+  background: rgba(16, 18, 21, 0.95);
+  border-color: rgba(255, 255, 255, 0.12);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.48);
+}
+
+[data-theme="minimal-dark"] .capsule-specular {
+  display: none;
+}
+
+[data-theme="minimal-dark"] .owl-ring-btn {
+  border-color: rgba(255, 255, 255, 0.32);
+  border-width: 1.5px;
+  background: rgba(24, 27, 32, 0.95);
+}
+
+[data-theme="minimal-dark"] .capsule.is-awake .owl-ring-btn {
+  border-color: var(--yellow);
+  box-shadow: 0 0 10px rgba(251, 191, 36, 0.3);
+}
+
+[data-theme="minimal-dark"] .tray-menu,
+[data-theme="minimal-dark"] .agent-tooltip {
+  background: rgba(18, 20, 24, 0.97);
+  border-color: rgba(255, 255, 255, 0.14);
+}
+
+/* Preset 3: Minimal Light */
+[data-theme="minimal-light"] .capsule {
+  background: rgba(247, 249, 248, 0.95);
+  border-color: rgba(15, 23, 20, 0.15);
+  box-shadow:
+    0 8px 22px rgba(0, 0, 0, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+
+[data-theme="minimal-light"] .capsule-specular {
+  display: none;
+}
+
+[data-theme="minimal-light"] .capsule-chevron {
+  color: rgba(15, 23, 20, 0.65);
+}
+
+[data-theme="minimal-light"] .capsule-chevron:hover {
+  color: #0f1714;
+  background: rgba(15, 23, 20, 0.08);
+}
+
+[data-theme="minimal-light"] .owl-ring-btn {
+  border-color: #d97706;
+  border-width: 2px;
+  background: #ffffff;
+}
+
+[data-theme="minimal-light"] .capsule-divider {
+  background: rgba(15, 23, 20, 0.18);
+}
+
+[data-theme="minimal-light"] .capsule-clock {
+  color: #0f1714;
+}
+
+[data-theme="minimal-light"] .countdown-btn {
+  background: rgba(217, 119, 6, 0.14);
+  color: #b45309;
+}
+
+[data-theme="minimal-light"] .hold-end-btn {
+  border-color: rgba(15, 23, 20, 0.22);
+  color: #0f1714;
+}
+
+[data-theme="minimal-light"] .agent-btn {
+  background: #ffffff;
+  border-color: rgba(15, 23, 20, 0.16);
+}
+
+[data-theme="minimal-light"] .agent-claude {
+  color: #d97706;
+}
+
+[data-theme="minimal-light"] .agent-codex {
+  color: #15803d;
+}
+
+[data-theme="minimal-light"] .agent-antigravity {
+  color: #0284c7;
+}
+
+[data-theme="minimal-light"] .tray-menu,
+[data-theme="minimal-light"] .agent-tooltip {
+  background: rgba(250, 252, 251, 0.98);
+  border-color: rgba(15, 23, 20, 0.16);
+  color: #0f1714;
+}
+
+[data-theme="minimal-light"] .tray-menu button {
+  color: #0f1714;
+}
+
+[data-theme="minimal-light"] .tray-menu button:hover {
+  background: rgba(15, 23, 20, 0.06);
+}
+
+[data-theme="minimal-light"] .tray-menu-head,
+[data-theme="minimal-light"] .agent-tt-harness {
+  color: #0f766e;
+}
+
+[data-theme="minimal-light"] .tray-menu-sep {
+  background: rgba(15, 23, 20, 0.12);
 }

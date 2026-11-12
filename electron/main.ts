@@ -22,6 +22,7 @@ let settings: NightowlSettings = {
   batterySafeStop: true,
   keepDisplay: false,
   autoAwakeForAgents: false,
+  theme: "forest",
 };
 
 let powerStatus: PowerStatus = {

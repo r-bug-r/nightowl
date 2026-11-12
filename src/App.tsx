@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { DiagnosticsModal } from "./components/DiagnosticsModal";
 import { HarnessIcon, harnessDisplayName } from "./components/HarnessIcons";
 import { OwlIcon } from "./components/OwlIcon";
-import type { AgentSession, AwakeState, NightowlSettings } from "./types";
+import type { AgentSession, AwakeState, NightowlSettings, ThemePreset } from "./types";
 
 const HOLD_TO_END_MS = 600;
 
@@ -30,6 +30,7 @@ const DEFAULT_SETTINGS: NightowlSettings = {
   batterySafeStop: true,
   keepDisplay: false,
   autoAwakeForAgents: false,
+  theme: "forest",
 };
 
 function formatClock(date: Date): string {
@@ -253,6 +254,10 @@ export const App: React.FC = () => {
           const next = await window.nightowl?.updateSettings({ [key]: val });
           if (next) setSettings(next);
         }}
+        onSelectTheme={async (theme) => {
+          const next = await window.nightowl?.updateSettings({ theme });
+          if (next) setSettings(next);
+        }}
         onStartQuick={async (hrs) => {
           const next = await window.nightowl?.startAwake(hrs * 3600_000);
           if (next) setAwake(next);
@@ -273,6 +278,7 @@ export const App: React.FC = () => {
   return (
     <div
       className="tray-stage"
+      data-theme={settings.theme || "forest"}
       ref={stageRef}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => {
@@ -372,6 +378,29 @@ export const App: React.FC = () => {
             <span className="menu-check">{settings.batterySafeStop ? "On" : "Off"}</span>
           </button>
           <div className="tray-menu-sep" />
+          <div className="tray-theme-row" role="group" aria-label="Theme preset">
+            {(
+              [
+                { id: "forest", label: "Forest" },
+                { id: "minimal-dark", label: "Min Dark" },
+                { id: "minimal-light", label: "Min Light" },
+              ] as Array<{ id: ThemePreset; label: string }>
+            ).map((preset) => (
+              <button
+                key={preset.id}
+                type="button"
+                className={`tray-theme-pill ${settings.theme === preset.id ? "active" : ""}`}
+                onClick={() => {
+                  void window.nightowl?.updateSettings({ theme: preset.id }).then((next) => {
+                    if (next) setSettings(next);
+                  });
+                }}
+              >
+                {preset.label}
+              </button>
+            ))}
+          </div>
+          <div className="tray-menu-sep" />
           <button
             type="button"
             role="menuitem"
@@ -462,7 +491,7 @@ export const App: React.FC = () => {
           aria-label={awake.active ? "Set or adjust timer" : "Set an awake timer"}
           title={awake.active ? "Click to set a new timer" : "Click to set an awake timer"}
         >
-          <OwlIcon awake={awake.active} size={22} />
+          <OwlIcon awake={awake.active} size={25} theme={settings.theme} />
         </button>
 
         {/* Slide-out Days / Hours / Minutes Inputs */}
