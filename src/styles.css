@@ -1,0 +1,621 @@
+:root {
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  --ui: "Segoe UI Variable Text", "Segoe UI", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --night: #050d0a;
+  --deep: #0a1612;
+  --glass: rgba(12, 22, 18, 0.88);
+  --rim: rgba(255, 255, 255, 0.24);
+  --text: #eefbf4;
+  --muted: #85a899;
+  --yellow: #fbbf24;
+  --amber: #f59e0b;
+  --emerald: #7ee787;
+  --mint: #a7f3d0;
+  --blue: #38bdf8;
+  --claude: #f59e0b;
+  --danger: #ef4444;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--text);
+  font-family: var(--ui);
+  user-select: none;
+  overflow: hidden;
+}
+
+.tray-stage {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 4px;
+}
+
+/* ---- Capsule matching reference image + Nightowl design system ---- */
+
+.capsule {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  height: 46px;
+  padding: 0 16px 0 12px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(24, 38, 32, 0.92) 0%, rgba(10, 18, 15, 0.94) 100%);
+  border: 1px solid var(--rim);
+  box-shadow:
+    0 10px 26px rgba(0, 0, 0, 0.52),
+    inset 0 1px 0 rgba(255, 255, 255, 0.18);
+  transition: all 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+  overflow: hidden;
+}
+
+.capsule.is-awake {
+  border-color: rgba(251, 191, 36, 0.45);
+}
+
+.capsule-specular {
+  position: absolute;
+  inset: 1px 8px auto 8px;
+  height: 44%;
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.14) 0%, rgba(255, 255, 255, 0) 100%);
+  pointer-events: none;
+}
+
+.capsule-chevron {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: rgba(238, 251, 244, 0.72);
+  cursor: grab;
+  border-radius: 6px;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+
+.capsule-chevron:hover {
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.capsule-chevron:active {
+  cursor: grabbing;
+}
+
+.capsule-chevron svg {
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* ---- Golden Ring + Owl ---- */
+
+.owl-ring-btn {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border-radius: 50%;
+  border: 2px solid var(--yellow);
+  background: rgba(5, 13, 10, 0.78);
+  cursor: pointer;
+  transition: transform 0.18s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.18s ease;
+}
+
+.owl-ring-btn:hover {
+  transform: scale(1.06);
+  box-shadow: 0 0 12px rgba(251, 191, 36, 0.35);
+}
+
+.capsule.is-awake .owl-ring-btn {
+  box-shadow: 0 0 14px rgba(251, 191, 36, 0.45);
+}
+
+/* ---- Expandable Agent Sessions Strip ---- */
+
+.agent-strip {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 0;
+  opacity: 0;
+  overflow: hidden;
+  transition: max-width 0.28s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.2s ease, margin 0.2s ease;
+}
+
+.agent-strip.open {
+  max-width: 420px;
+  opacity: 1;
+  margin-right: 2px;
+}
+
+.agent-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(8, 18, 14, 0.9);
+  cursor: pointer;
+  transition: transform 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease;
+}
+
+.agent-btn:hover {
+  transform: translateY(-1px) scale(1.08);
+  border-color: rgba(255, 255, 255, 0.42);
+}
+
+.agent-btn.no-hwnd {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.agent-claude {
+  color: #f59e0b;
+}
+
+.agent-claude.is-thinking {
+  border-color: rgba(245, 158, 11, 0.65);
+  box-shadow: 0 0 10px rgba(245, 158, 11, 0.35);
+}
+
+.agent-codex {
+  color: #7ee787;
+}
+
+.agent-codex.is-thinking {
+  border-color: rgba(126, 231, 135, 0.65);
+  box-shadow: 0 0 10px rgba(126, 231, 135, 0.35);
+}
+
+.agent-antigravity {
+  color: #38bdf8;
+}
+
+.agent-antigravity.is-thinking {
+  border-color: rgba(56, 189, 248, 0.65);
+  box-shadow: 0 0 10px rgba(56, 189, 248, 0.35);
+}
+
+/* ---- Harness Thinking Animations ---- */
+
+@keyframes spinSlow {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes pulseBurst {
+  0%, 100% { transform: rotate(0deg) scale(1); opacity: 0.92; }
+  50% { transform: rotate(180deg) scale(1.12); opacity: 1; }
+}
+
+@keyframes agyFloat {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-1.5px); }
+}
+
+.harness-claude.is-thinking .claude-burst {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: pulseBurst 2.4s linear infinite;
+}
+
+.harness-codex.is-thinking .codex-knot {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: spinSlow 3.2s linear infinite;
+}
+
+.harness-agy.is-thinking .agy-orbit {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: spinSlow 2.6s linear infinite;
+}
+
+.harness-agy.is-thinking .agy-delta {
+  animation: agyFloat 1.5s ease-in-out infinite;
+}
+
+/* ---- Timer Inputs & Countdown ---- */
+
+.timer-fields {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.timer-fields input {
+  width: 28px;
+  height: 24px;
+  padding: 0 4px;
+  border-radius: 6px;
+  border: 1px solid rgba(167, 243, 208, 0.28);
+  background: rgba(5, 13, 10, 0.88);
+  color: var(--text);
+  font: 500 11px var(--mono);
+  text-align: center;
+  outline: none;
+}
+
+.timer-fields input:focus {
+  border-color: var(--yellow);
+}
+
+.timer-go {
+  height: 24px;
+  padding: 0 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(251, 191, 36, 0.5);
+  background: rgba(251, 191, 36, 0.16);
+  color: var(--yellow);
+  font: 600 11px var(--ui);
+  cursor: pointer;
+}
+
+.awake-controls {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.countdown-btn {
+  padding: 2px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: rgba(251, 191, 36, 0.14);
+  color: var(--yellow);
+  font: 600 12px var(--mono);
+  cursor: pointer;
+}
+
+.countdown-btn:hover {
+  background: rgba(251, 191, 36, 0.24);
+}
+
+.hold-end-btn {
+  position: relative;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: conic-gradient(var(--yellow) var(--hold-deg, 0deg), rgba(255, 255, 255, 0.08) 0deg);
+  color: var(--text);
+  font: 600 13px/1 var(--ui);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ---- Divider & Clock ---- */
+
+.capsule-divider {
+  position: relative;
+  z-index: 1;
+  width: 1px;
+  height: 18px;
+  background: rgba(255, 255, 255, 0.24);
+}
+
+.capsule-clock {
+  position: relative;
+  z-index: 1;
+  font: 500 13.5px/1 var(--ui);
+  color: #f4faf7;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+/* ---- Agent Tooltip ---- */
+
+.agent-tooltip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: rgba(8, 16, 13, 0.94);
+  border: 1px solid rgba(167, 243, 208, 0.24);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+  font: 500 11.5px var(--ui);
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.agent-tt-harness {
+  color: var(--mint);
+  font-weight: 600;
+}
+
+.agent-tt-sep {
+  color: var(--muted);
+}
+
+.agent-tt-state.is-thinking {
+  color: var(--yellow);
+}
+
+/* ---- Context Menu ---- */
+
+.tray-menu {
+  width: 238px;
+  padding: 6px;
+  border-radius: 14px;
+  background: rgba(10, 20, 16, 0.96);
+  border: 1px solid rgba(167, 243, 208, 0.25);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.6);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.tray-menu-head {
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 10px;
+  font: 600 12px var(--ui);
+  color: var(--mint);
+}
+
+.tray-menu-meta {
+  color: var(--muted);
+  font-family: var(--mono);
+}
+
+.tray-menu-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: rgba(167, 243, 208, 0.16);
+}
+
+.tray-menu button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font: 400 12.5px var(--ui);
+  text-align: left;
+  cursor: pointer;
+}
+
+.tray-menu button:hover {
+  background: rgba(167, 243, 208, 0.12);
+}
+
+.tray-menu button.danger {
+  color: #fca5a5;
+}
+
+.menu-check {
+  font: 600 11px var(--mono);
+  color: var(--yellow);
+}
+
+/* ---- Diagnostics Window ---- */
+
+.diag-shell {
+  min-height: 100vh;
+  padding: 18px;
+  background: linear-gradient(180deg, #050d0a 0%, #0a1612 100%);
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  overflow-y: auto;
+}
+
+.diag-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.diag-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.diag-brand h1 {
+  margin: 0;
+  font: 600 16px/1.2 var(--ui);
+}
+
+.diag-sub {
+  margin: 2px 0 0;
+  font: 400 12px var(--ui);
+  color: var(--muted);
+}
+
+.owl-ring-sm {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 2px solid var(--yellow);
+  background: rgba(5, 13, 10, 0.8);
+}
+
+.diag-pill {
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(167, 243, 208, 0.25);
+  font: 600 11.5px var(--mono);
+  color: var(--muted);
+}
+
+.diag-pill.is-awake {
+  border-color: rgba(251, 191, 36, 0.5);
+  color: var(--yellow);
+  background: rgba(251, 191, 36, 0.12);
+}
+
+.diag-card {
+  border-radius: 12px;
+  border: 1px solid rgba(167, 243, 208, 0.2);
+  background: rgba(10, 22, 18, 0.78);
+  overflow: hidden;
+}
+
+.diag-card-bar {
+  display: flex;
+  justify-content: space-between;
+  padding: 7px 12px;
+  border-bottom: 1px solid rgba(167, 243, 208, 0.14);
+  font: 500 11px var(--mono);
+  color: var(--muted);
+}
+
+.diag-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  padding: 12px;
+}
+
+.diag-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.diag-k {
+  font: 600 10px var(--mono);
+  color: var(--muted);
+}
+
+.diag-v {
+  font: 500 13px var(--ui);
+}
+
+.diag-actions {
+  display: flex;
+  gap: 8px;
+  padding: 0 12px 12px;
+}
+
+.diag-actions button,
+.diag-sessions button {
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(167, 243, 208, 0.24);
+  background: rgba(167, 243, 208, 0.08);
+  color: var(--text);
+  font: 500 12px var(--ui);
+  cursor: pointer;
+}
+
+.diag-actions button:hover,
+.diag-sessions button:hover:not(:disabled) {
+  background: rgba(167, 243, 208, 0.18);
+}
+
+.diag-actions button.danger {
+  border-color: rgba(239, 68, 68, 0.45);
+  color: #fca5a5;
+}
+
+.diag-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  font: 400 13px var(--ui);
+  cursor: pointer;
+}
+
+.diag-empty {
+  margin: 0;
+  padding: 12px;
+  font: 400 12.5px var(--ui);
+  color: var(--muted);
+}
+
+.diag-sessions {
+  list-style: none;
+  margin: 0;
+  padding: 6px 12px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.diag-sessions li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.diag-sess-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.sess-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: rgba(5, 13, 10, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+}
+
+.sess-claude { color: #f59e0b; }
+.sess-codex { color: #7ee787; }
+.sess-antigravity { color: #38bdf8; }
+
+.diag-sess-name {
+  font: 600 13px var(--ui);
+}
+
+.diag-sess-meta {
+  font: 400 11.5px var(--ui);
+  color: var(--muted);
+}

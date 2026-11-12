@@ -1,0 +1,20 @@
+appId: com.rbugr.nightowl
+productName: Nightowl
+directories:
+  output: release
+files:
+  - dist/**/*
+  - dist-electron/**/*
+  - native/bin/**/*
+  - package.json
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  perMachine: false
+  createDesktopShortcut: true
+  createStartMenuShortcut: true

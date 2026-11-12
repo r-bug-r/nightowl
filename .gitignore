@@ -1,0 +1,8 @@
+node_modules/
+dist/
+dist-electron/
+release/
+native/Nightowl.Native/bin/
+native/Nightowl.Native/obj/
+*.log
+.DS_Store
