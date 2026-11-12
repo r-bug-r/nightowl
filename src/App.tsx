@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { DiagnosticsModal } from "./components/DiagnosticsModal";
 import { HarnessIcon, harnessDisplayName } from "./components/HarnessIcons";
 import { OwlIcon } from "./components/OwlIcon";
@@ -68,6 +68,9 @@ export const App: React.FC = () => {
   >(null);
   const [timerOpen, setTimerOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [anchorX, setAnchorX] = useState<number | null>(null);
+  const [floatingLeft, setFloatingLeft] = useState<number | undefined>(undefined);
+  const floatingRef = useRef<HTMLDivElement | null>(null);
 
   const [days, setDays] = useState("");
   const [hours, setHours] = useState("");
@@ -276,11 +279,34 @@ export const App: React.FC = () => {
     );
   }
 
+  const updateAnchorFromTarget = (el: HTMLElement | null) => {
+    const stage = stageRef.current;
+    if (!el || !stage) return;
+    const stageRect = stage.getBoundingClientRect();
+    const rect = el.getBoundingClientRect();
+    setAnchorX(rect.left - stageRect.left + rect.width / 2);
+  };
+
   const showAgentsStrip = hovered && sessions.length > 0;
   const showAsleepActions = !awake.active && (hovered || timerOpen);
   const showExpandedAwakeExtras = awake.active && hovered && !timerOpen;
   const showTimerPopover = !menuOpen && !hoveredSession && (hoveredControl === "timer" || timerOpen);
   const isCapsuleExpanded = showAgentsStrip || showAsleepActions || showExpandedAwakeExtras;
+  const showHintPill = !menuOpen && !hoveredSession && !showTimerPopover && Boolean(hoveredControl);
+
+  useLayoutEffect(() => {
+    const stage = stageRef.current;
+    const floating = floatingRef.current;
+    if (!stage || !floating || anchorX === null) {
+      setFloatingLeft(undefined);
+      return;
+    }
+    const stageWidth = stage.clientWidth;
+    const floatingWidth = floating.offsetWidth;
+    const maxLeft = Math.max(4, stageWidth - floatingWidth - 4);
+    const clamped = Math.max(4, Math.min(maxLeft, Math.round(anchorX - floatingWidth / 2)));
+    setFloatingLeft(clamped);
+  }, [anchorX, hoveredSession, showTimerPopover, showHintPill, hoveredControl]);
 
   return (
     <div
@@ -296,114 +322,132 @@ export const App: React.FC = () => {
     >
       {/* OMP Session HUD-style Floating Preview Card */}
       {!menuOpen && hoveredSession && (
-        <div className="agent-preview-card" role="status">
-          <div className="agent-pc-head">
-            <span className="agent-pc-brand">
-              <HarnessIcon harness={hoveredSession.harness} state={hoveredSession.state} size={13} />
-              <span className="agent-pc-harness">{harnessDisplayName(hoveredSession.harness)}</span>
-            </span>
-            <span className="agent-pc-badges">
-              <span className="agent-pc-source">
-                {hoveredSession.source === "cli" ? "CLI" : "Desktop"}
+        <div className="floating-slot">
+          <div
+            ref={floatingRef}
+            className="agent-preview-card"
+            role="status"
+            style={floatingLeft !== undefined ? { marginLeft: `${floatingLeft}px` } : undefined}
+          >
+            <div className="agent-pc-head">
+              <span className="agent-pc-brand">
+                <HarnessIcon harness={hoveredSession.harness} state={hoveredSession.state} size={13} />
+                <span className="agent-pc-harness">{harnessDisplayName(hoveredSession.harness)}</span>
               </span>
-              <span
-                className={`agent-pc-state ${
-                  hoveredSession.state === "thinking" ? "is-thinking" : ""
-                }`}
-              >
-                {hoveredSession.state === "thinking" ? "Thinking..." : "Ready"}
+              <span className="agent-pc-badges">
+                <span className="agent-pc-source">
+                  {hoveredSession.source === "cli" ? "CLI" : "Desktop"}
+                </span>
+                <span
+                  className={`agent-pc-state ${
+                    hoveredSession.state === "thinking" ? "is-thinking" : ""
+                  }`}
+                >
+                  {hoveredSession.state === "thinking" ? "Thinking..." : "Ready"}
+                </span>
               </span>
-            </span>
-          </div>
-          <div className="agent-pc-project">{hoveredSession.projectName}</div>
-          {(hoveredSession.preview || hoveredSession.windowTitle) && (
-            <div className="agent-pc-preview">
-              {hoveredSession.preview || hoveredSession.windowTitle}
             </div>
-          )}
-          <div className="agent-pc-foot">Click icon to focus window</div>
+            <div className="agent-pc-project">{hoveredSession.projectName}</div>
+            {(hoveredSession.preview || hoveredSession.windowTitle) && (
+              <div className="agent-pc-preview">
+                {hoveredSession.preview || hoveredSession.windowTitle}
+              </div>
+            )}
+            <div className="agent-pc-foot">Click icon to focus window</div>
+          </div>
         </div>
       )}
 
       {/* Floating Timer Options Popover (on hover or click of Timer icon) */}
       {showTimerPopover && (
-        <div
-          className="capsule-hover-popover"
-          role="dialog"
-          aria-label="Timer presets and custom duration"
-          onMouseEnter={() => setHoveredControl("timer")}
-          onMouseLeave={() => setHoveredControl((prev) => (prev === "timer" ? null : prev))}
-        >
-          <div className="popover-chips">
-            {[
-              { label: "30m", mins: 30 },
-              { label: "2h", mins: 120 },
-              { label: "8h", mins: 480 },
-            ].map((preset) => (
-              <button
-                key={preset.label}
-                type="button"
-                className="popover-chip"
-                onClick={() => {
-                  setTimerOpen(false);
-                  setHoveredControl(null);
-                  void window.nightowl?.startAwake(preset.mins).then((next) => next && setAwake(next));
-                }}
-              >
-                {preset.label}
-              </button>
-            ))}
-          </div>
-          <form
-            className="timer-fields"
-            onSubmit={(e) => {
-              handleSubmitTimer(e);
-              setHoveredControl(null);
-            }}
+        <div className="floating-slot">
+          <div
+            ref={floatingRef}
+            className="capsule-hover-popover"
+            role="dialog"
+            aria-label="Timer presets and custom duration"
+            style={floatingLeft !== undefined ? { marginLeft: `${floatingLeft}px` } : undefined}
+            onMouseEnter={() => setHoveredControl("timer")}
+            onMouseLeave={() => setHoveredControl((prev) => (prev === "timer" ? null : prev))}
           >
-            <input
-              type="text"
-              inputMode="numeric"
-              maxLength={2}
-              placeholder="D"
-              aria-label="Days"
-              value={days}
-              onChange={(e) => setDays(e.target.value.replace(/\D/g, ""))}
-            />
-            <input
-              ref={hoursInputRef}
-              type="text"
-              inputMode="numeric"
-              maxLength={2}
-              placeholder="H"
-              aria-label="Hours"
-              value={hours}
-              onChange={(e) => setHours(e.target.value.replace(/\D/g, ""))}
-            />
-            <input
-              type="text"
-              inputMode="numeric"
-              maxLength={2}
-              placeholder="M"
-              aria-label="Minutes"
-              value={minutes}
-              onChange={(e) => setMinutes(e.target.value.replace(/\D/g, ""))}
-            />
-            <button type="submit" className="timer-go" title="Start custom timer">
-              ✓
-            </button>
-          </form>
+            <div className="popover-chips">
+              {[
+                { label: "30m", mins: 30 },
+                { label: "2h", mins: 120 },
+                { label: "8h", mins: 480 },
+              ].map((preset) => (
+                <button
+                  key={preset.label}
+                  type="button"
+                  className="popover-chip"
+                  onClick={() => {
+                    setTimerOpen(false);
+                    setHoveredControl(null);
+                    void window.nightowl?.startAwake(preset.mins).then((next) => next && setAwake(next));
+                  }}
+                >
+                  {preset.label}
+                </button>
+              ))}
+            </div>
+            <form
+              className="timer-fields"
+              onSubmit={(e) => {
+                handleSubmitTimer(e);
+                setHoveredControl(null);
+              }}
+            >
+              <input
+                type="text"
+                inputMode="numeric"
+                maxLength={2}
+                placeholder="D"
+                aria-label="Days"
+                value={days}
+                onChange={(e) => setDays(e.target.value.replace(/\D/g, ""))}
+              />
+              <input
+                ref={hoursInputRef}
+                type="text"
+                inputMode="numeric"
+                maxLength={2}
+                placeholder="H"
+                aria-label="Hours"
+                value={hours}
+                onChange={(e) => setHours(e.target.value.replace(/\D/g, ""))}
+              />
+              <input
+                type="text"
+                inputMode="numeric"
+                maxLength={2}
+                placeholder="M"
+                aria-label="Minutes"
+                value={minutes}
+                onChange={(e) => setMinutes(e.target.value.replace(/\D/g, ""))}
+              />
+              <button type="submit" className="timer-go" title="Start custom timer">
+                ✓
+              </button>
+            </form>
+          </div>
         </div>
       )}
 
       {/* Floating Control Hint Pill (on hover of Quick Awake, Countdown, Screen, Stop) */}
-      {!menuOpen && !hoveredSession && !showTimerPopover && hoveredControl && (
-        <div className="capsule-hover-hint" role="status">
-          {hoveredControl === "awake" && "Quick Awake · Stay awake until stopped"}
-          {hoveredControl === "countdown" && "Click to add +30m"}
-          {hoveredControl === "screen" &&
-            (settings.keepDisplay ? "Screen: Stays lit" : "Screen: Turns off")}
-          {hoveredControl === "stop" && "Hold 0.6s to stop"}
+      {showHintPill && (
+        <div className="floating-slot">
+          <div
+            ref={floatingRef}
+            className="capsule-hover-hint"
+            role="status"
+            style={floatingLeft !== undefined ? { marginLeft: `${floatingLeft}px` } : undefined}
+          >
+            {hoveredControl === "awake" && "Quick Awake · Stay awake until stopped"}
+            {hoveredControl === "countdown" && "Click to add +30m"}
+            {hoveredControl === "screen" &&
+              (settings.keepDisplay ? "Screen: Stays lit" : "Screen: Turns off")}
+            {hoveredControl === "stop" && "Hold 0.6s to stop"}
+          </div>
         </div>
       )}
 
@@ -550,7 +594,8 @@ export const App: React.FC = () => {
               type="button"
               className={`agent-btn agent-${session.harness} ${session.state === "thinking" ? "is-thinking" : ""} ${session.hwnd ? "" : "no-hwnd"}`}
               onClick={() => void handleFocusAgent(session)}
-              onMouseEnter={() => {
+              onMouseEnter={(e) => {
+                updateAnchorFromTarget(e.currentTarget);
                 setHoveredControl(null);
                 setHoveredSession(session);
               }}
@@ -566,7 +611,10 @@ export const App: React.FC = () => {
         <button
           type="button"
           className="owl-ring-btn"
-          onClick={handleToggleTimer}
+          onClick={(e) => {
+            updateAnchorFromTarget(e.currentTarget);
+            handleToggleTimer();
+          }}
           aria-label={awake.active ? "Set or adjust timer" : "Set an awake timer"}
           title={awake.active ? "Click to set a new timer" : "Click to set an awake timer"}
         >
@@ -580,12 +628,16 @@ export const App: React.FC = () => {
               type="button"
               className={`capsule-icon-action ${timerOpen ? "is-active" : ""}`}
               aria-label="Timer options"
-              onMouseEnter={() => {
+              onMouseEnter={(e) => {
+                updateAnchorFromTarget(e.currentTarget);
                 setHoveredSession(null);
                 setHoveredControl("timer");
               }}
               onMouseLeave={() => setHoveredControl((prev) => (prev === "timer" ? null : prev))}
-              onClick={handleToggleTimer}
+              onClick={(e) => {
+                updateAnchorFromTarget(e.currentTarget);
+                handleToggleTimer();
+              }}
             >
               <svg viewBox="0 0 16 16" aria-hidden="true">
                 <circle cx="8" cy="8.5" r="5.5" fill="none" stroke="currentColor" strokeWidth="1.45" />
@@ -602,7 +654,8 @@ export const App: React.FC = () => {
               type="button"
               className="capsule-icon-action is-accent"
               aria-label="Quick Awake"
-              onMouseEnter={() => {
+              onMouseEnter={(e) => {
+                updateAnchorFromTarget(e.currentTarget);
                 setHoveredSession(null);
                 setHoveredControl("awake");
               }}
@@ -630,7 +683,8 @@ export const App: React.FC = () => {
               type="button"
               className="countdown-btn"
               aria-label="Remaining awake time, click to add 30 minutes"
-              onMouseEnter={() => {
+              onMouseEnter={(e) => {
+                updateAnchorFromTarget(e.currentTarget);
                 setHoveredSession(null);
                 setHoveredControl("countdown");
               }}
@@ -644,7 +698,8 @@ export const App: React.FC = () => {
                 type="button"
                 className={`capsule-icon-btn ${settings.keepDisplay ? "is-on" : ""}`}
                 aria-label={settings.keepDisplay ? "Screen stays lit" : "Screen turns off"}
-                onMouseEnter={() => {
+                onMouseEnter={(e) => {
+                  updateAnchorFromTarget(e.currentTarget);
                   setHoveredSession(null);
                   setHoveredControl("screen");
                 }}
@@ -670,7 +725,8 @@ export const App: React.FC = () => {
                   "--hold-deg": `${Math.round(holdProgress * 360)}deg`,
                 } as React.CSSProperties
               }
-              onMouseEnter={() => {
+              onMouseEnter={(e) => {
+                updateAnchorFromTarget(e.currentTarget);
                 setHoveredSession(null);
                 setHoveredControl("stop");
               }}

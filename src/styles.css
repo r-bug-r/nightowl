@@ -497,6 +497,13 @@ body,
 
 /* ---- OMP-Style Agent Preview Card & Hover Popovers ---- */
 
+.floating-slot {
+  width: 100%;
+  display: flex;
+  justify-content: flex-start;
+  align-items: flex-end;
+}
+
 .agent-preview-card {
   width: 248px;
   padding: 9px 11px;
