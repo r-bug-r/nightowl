@@ -274,9 +274,9 @@ export const App: React.FC = () => {
   }
 
   const showAgentsStrip = hovered && sessions.length > 0;
-  const showInlineAsleepControls = !awake.active && (hovered || timerOpen);
+  const showAsleepActions = !awake.active && (hovered || timerOpen);
   const showExpandedAwakeExtras = awake.active && hovered && !timerOpen;
-  const isCapsuleExpanded = showAgentsStrip || showInlineAsleepControls || showExpandedAwakeExtras;
+  const isCapsuleExpanded = showAgentsStrip || showAsleepActions || showExpandedAwakeExtras;
 
   return (
     <div
@@ -465,92 +465,74 @@ export const App: React.FC = () => {
           <OwlIcon awake={awake.active} size={25} theme={settings.theme} />
         </button>
 
-        {/* Expanded Asleep Controls: Quick Awake Presets + Classic D/H/M Timer */}
-        {showInlineAsleepControls && (
+        {/* Expanded Asleep Controls: Seamless 2-button bar (Timer + Quick Awake) or D/H/M morph */}
+        {showAsleepActions && (
           <div className="inline-timer-panel">
-            <div className="quick-chips" role="group" aria-label="Quick awake timers">
-              <button
-                type="button"
-                className="quick-chip"
-                onClick={() => {
-                  void window.nightowl?.startAwake(30 * 60_000).then((next) => next && setAwake(next));
-                  setTimerOpen(false);
-                }}
-                title="Keep awake for 30 minutes"
-              >
-                30m
-              </button>
-              <button
-                type="button"
-                className="quick-chip"
-                onClick={() => {
-                  void window.nightowl?.startAwake(2 * 3600_000).then((next) => next && setAwake(next));
-                  setTimerOpen(false);
-                }}
-                title="Keep awake for 2 hours"
-              >
-                2h
-              </button>
-              <button
-                type="button"
-                className="quick-chip"
-                onClick={() => {
-                  void window.nightowl?.startAwake(8 * 3600_000).then((next) => next && setAwake(next));
-                  setTimerOpen(false);
-                }}
-                title="Keep awake for 8 hours"
-              >
-                8h
-              </button>
-              <button
-                type="button"
-                className="quick-chip"
-                onClick={() => {
-                  void window.nightowl?.startAwake(null).then((next) => next && setAwake(next));
-                  setTimerOpen(false);
-                }}
-                title="Stay awake until stopped"
-              >
-                ∞
-              </button>
-            </div>
-            <form className="timer-fields" onSubmit={handleSubmitTimer}>
-              <input
-                type="text"
-                inputMode="numeric"
-                maxLength={2}
-                placeholder="D"
-                aria-label="Days"
-                value={days}
-                onChange={(e) => setDays(e.target.value.replace(/\D/g, ""))}
-              />
-              <input
-                ref={hoursInputRef}
-                type="text"
-                inputMode="numeric"
-                maxLength={2}
-                placeholder="H"
-                aria-label="Hours"
-                value={hours}
-                onChange={(e) => setHours(e.target.value.replace(/\D/g, ""))}
-              />
-              <input
-                type="text"
-                inputMode="numeric"
-                maxLength={2}
-                placeholder="M"
-                aria-label="Minutes"
-                value={minutes}
-                onChange={(e) => setMinutes(e.target.value.replace(/\D/g, ""))}
-              />
-              <button type="submit" className="timer-go" title="Start custom timer">
-                Go
-              </button>
-            </form>
+            {!timerOpen ? (
+              <div className="capsule-action-pair">
+                <button
+                  type="button"
+                  className="capsule-pill-btn"
+                  onClick={handleToggleTimer}
+                  title="Set a custom timer (D / H / M)"
+                >
+                  <svg className="pill-ico" viewBox="0 0 16 16" aria-hidden="true">
+                    <circle cx="8" cy="8.5" r="5.5" fill="none" stroke="currentColor" strokeWidth="1.4" />
+                    <path d="M8 5.5v3l2 1.2M6.2 1.8h3.6" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+                  </svg>
+                  <span>Timer</span>
+                </button>
+                <button
+                  type="button"
+                  className="capsule-pill-btn is-accent"
+                  onClick={() => {
+                    void window.nightowl?.startAwake(null).then((next) => next && setAwake(next));
+                  }}
+                  title="Stay awake until stopped"
+                >
+                  <span className="pill-dot" aria-hidden="true" />
+                  <span>Awake</span>
+                </button>
+              </div>
+            ) : (
+              <form className="timer-fields" onSubmit={handleSubmitTimer}>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  maxLength={2}
+                  placeholder="D"
+                  aria-label="Days"
+                  value={days}
+                  onChange={(e) => setDays(e.target.value.replace(/\D/g, ""))}
+                />
+                <input
+                  ref={hoursInputRef}
+                  type="text"
+                  inputMode="numeric"
+                  maxLength={2}
+                  placeholder="H"
+                  aria-label="Hours"
+                  value={hours}
+                  onChange={(e) => setHours(e.target.value.replace(/\D/g, ""))}
+                />
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  maxLength={2}
+                  placeholder="M"
+                  aria-label="Minutes"
+                  value={minutes}
+                  onChange={(e) => setMinutes(e.target.value.replace(/\D/g, ""))}
+                />
+                <button type="submit" className="timer-go" title="Start timer">
+                  ✓
+                </button>
+              </form>
+            )}
           </div>
         )}
 
-        {/* Active Countdown + Expanded Awake Controls + Hold-to-End Button */}
+        {/* Active Countdown + Minimal Screen Toggle + Hold-to-End Button */}
         {awake.active && (
           <div className="awake-controls">
             <button
@@ -559,31 +541,27 @@ export const App: React.FC = () => {
               onClick={handleAddTime}
               title="Click to add 30 minutes"
             >
-              {awake.endsAt ? formatCountdown(liveRemainingMs) : "∞ Awake"}
+              <span>{awake.endsAt ? formatCountdown(liveRemainingMs) : "Awake"}</span>
+              {showExpandedAwakeExtras && <span className="countdown-add">+30m</span>}
             </button>
             {showExpandedAwakeExtras && (
-              <>
-                <button
-                  type="button"
-                  className="quick-chip"
-                  onClick={handleAddTime}
-                  title="Add 30 minutes"
-                >
-                  +30m
-                </button>
-                <button
-                  type="button"
-                  className={`quick-chip ${settings.keepDisplay ? "is-on" : ""}`}
-                  onClick={() => {
-                    void window.nightowl?.updateSettings({ keepDisplay: !settings.keepDisplay }).then((next) => {
-                      if (next) setSettings(next);
-                    });
-                  }}
-                  title={settings.keepDisplay ? "Screen stays lit (click to allow dimming)" : "Screen can turn off (click to keep lit)"}
-                >
-                  {settings.keepDisplay ? "Screen On" : "Screen Off"}
-                </button>
-              </>
+              <button
+                type="button"
+                className={`capsule-icon-btn ${settings.keepDisplay ? "is-on" : ""}`}
+                onClick={() => {
+                  void window.nightowl?.updateSettings({ keepDisplay: !settings.keepDisplay }).then((next) => {
+                    if (next) setSettings(next);
+                  });
+                }}
+                aria-label={settings.keepDisplay ? "Screen stays lit" : "Allow screen to turn off"}
+                title={settings.keepDisplay ? "Screen stays lit (click to allow dimming)" : "Screen can turn off (click to keep lit)"}
+              >
+                <svg viewBox="0 0 16 16" aria-hidden="true">
+                  <rect x="2" y="3" width="12" height="8.5" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.35" />
+                  <path d="M5.5 13.5h5" fill="none" stroke="currentColor" strokeWidth="1.35" strokeLinecap="round" />
+                  {settings.keepDisplay && <circle cx="8" cy="7.2" r="1.4" fill="currentColor" />}
+                </svg>
+              </button>
             )}
             <button
               type="button"

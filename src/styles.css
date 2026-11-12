@@ -248,57 +248,145 @@ body,
   animation: agyFloat 1.5s ease-in-out infinite;
 }
 
-/* ---- Inline Expanded Timer & Quick Awake Chips ---- */
+/* ---- Seamless Insomnia-Style In-Capsule Controls ---- */
+
+@keyframes capsuleReveal {
+  from {
+    opacity: 0;
+    transform: translateX(6px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
 
 .inline-timer-panel {
   position: relative;
   z-index: 1;
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  animation: capsuleReveal 0.22s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-.quick-chips {
+.capsule-action-pair {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
 }
 
-.quick-chip {
-  height: 24px;
-  padding: 0 7px;
-  border-radius: 6px;
-  border: 1px solid rgba(167, 243, 208, 0.22);
-  background: rgba(5, 13, 10, 0.72);
-  color: var(--mint);
-  font: 600 11px var(--mono);
+.capsule-pill-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text);
+  font: 500 11.5px var(--ui);
   cursor: pointer;
   white-space: nowrap;
-  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+  transition: transform 0.16s cubic-bezier(0.22, 1, 0.36, 1), border-color 0.16s ease, background 0.16s ease, color 0.16s ease;
 }
 
-.quick-chip:hover {
-  border-color: rgba(251, 191, 36, 0.55);
+.capsule-pill-btn:hover {
+  transform: translateY(-0.5px);
+  border-color: rgba(255, 255, 255, 0.34);
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.capsule-pill-btn.is-accent {
+  border-color: rgba(251, 191, 36, 0.42);
   background: rgba(251, 191, 36, 0.14);
   color: var(--yellow);
 }
 
-.quick-chip.is-on {
+.capsule-pill-btn.is-accent:hover {
+  border-color: rgba(251, 191, 36, 0.72);
+  background: rgba(251, 191, 36, 0.22);
+}
+
+.pill-ico {
+  width: 13px;
+  height: 13px;
+  flex-shrink: 0;
+}
+
+.pill-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--yellow);
+  box-shadow: 0 0 6px var(--yellow);
+}
+
+.capsule-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--muted);
+  cursor: pointer;
+  animation: capsuleReveal 0.2s cubic-bezier(0.22, 1, 0.36, 1);
+  transition: border-color 0.16s ease, color 0.16s ease, background 0.16s ease;
+}
+
+.capsule-icon-btn svg {
+  width: 13px;
+  height: 13px;
+}
+
+.capsule-icon-btn:hover {
+  border-color: rgba(255, 255, 255, 0.36);
+  color: var(--text);
+}
+
+.capsule-icon-btn.is-on {
   border-color: rgba(126, 231, 135, 0.55);
   background: rgba(126, 231, 135, 0.14);
   color: var(--emerald);
 }
 
-[data-theme="minimal-light"] .quick-chip {
-  background: #ffffff;
+.countdown-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.countdown-add {
+  font: 600 10px var(--mono);
+  color: var(--mint);
+  opacity: 0.85;
+  animation: capsuleReveal 0.18s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+[data-theme="minimal-light"] .capsule-pill-btn {
+  background: rgba(15, 23, 20, 0.05);
   border-color: rgba(15, 23, 20, 0.16);
   color: #0f1714;
 }
 
-[data-theme="minimal-light"] .quick-chip:hover {
-  border-color: #d97706;
-  background: rgba(217, 119, 6, 0.12);
+[data-theme="minimal-light"] .capsule-pill-btn:hover {
+  background: rgba(15, 23, 20, 0.1);
+}
+
+[data-theme="minimal-light"] .capsule-pill-btn.is-accent {
+  background: rgba(217, 119, 6, 0.14);
+  border-color: rgba(217, 119, 6, 0.45);
   color: #b45309;
+}
+
+[data-theme="minimal-light"] .capsule-icon-btn {
+  background: rgba(15, 23, 20, 0.05);
+  border-color: rgba(15, 23, 20, 0.16);
+  color: #33413b;
 }
 
 [data-theme="minimal-light"] .timer-fields input {
