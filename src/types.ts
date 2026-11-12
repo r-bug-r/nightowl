@@ -11,6 +11,7 @@ export interface AgentSession {
   hwnd: string | null;
   pid: number;
   windowTitle: string | null;
+  preview?: string | null;
   source: "cli" | "desktop";
   updatedAt: number;
 }

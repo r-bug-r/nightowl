@@ -63,6 +63,9 @@ export const App: React.FC = () => {
   // Capsule UI states
   const [hovered, setHovered] = useState(false);
   const [hoveredSession, setHoveredSession] = useState<AgentSession | null>(null);
+  const [hoveredControl, setHoveredControl] = useState<
+    "timer" | "awake" | "countdown" | "screen" | "stop" | null
+  >(null);
   const [timerOpen, setTimerOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
 
@@ -276,6 +279,7 @@ export const App: React.FC = () => {
   const showAgentsStrip = hovered && sessions.length > 0;
   const showAsleepActions = !awake.active && (hovered || timerOpen);
   const showExpandedAwakeExtras = awake.active && hovered && !timerOpen;
+  const showTimerPopover = !menuOpen && !hoveredSession && (hoveredControl === "timer" || timerOpen);
   const isCapsuleExpanded = showAgentsStrip || showAsleepActions || showExpandedAwakeExtras;
 
   return (
@@ -287,18 +291,119 @@ export const App: React.FC = () => {
       onMouseLeave={() => {
         setHovered(false);
         setHoveredSession(null);
+        setHoveredControl(null);
       }}
     >
-      {/* Floating Session Tooltip */}
-      {hoveredSession && (
-        <div className="agent-tooltip" role="status">
-          <span className="agent-tt-harness">{harnessDisplayName(hoveredSession.harness)}</span>
-          <span className="agent-tt-sep">·</span>
-          <span className="agent-tt-proj">{hoveredSession.projectName}</span>
-          <span className="agent-tt-sep">·</span>
-          <span className={`agent-tt-state ${hoveredSession.state === "thinking" ? "is-thinking" : ""}`}>
-            {hoveredSession.state === "thinking" ? "Thinking..." : "Ready"}
-          </span>
+      {/* OMP Session HUD-style Floating Preview Card */}
+      {!menuOpen && hoveredSession && (
+        <div className="agent-preview-card" role="status">
+          <div className="agent-pc-head">
+            <span className="agent-pc-brand">
+              <HarnessIcon harness={hoveredSession.harness} state={hoveredSession.state} size={13} />
+              <span className="agent-pc-harness">{harnessDisplayName(hoveredSession.harness)}</span>
+            </span>
+            <span className="agent-pc-badges">
+              <span className="agent-pc-source">
+                {hoveredSession.source === "cli" ? "CLI" : "Desktop"}
+              </span>
+              <span
+                className={`agent-pc-state ${
+                  hoveredSession.state === "thinking" ? "is-thinking" : ""
+                }`}
+              >
+                {hoveredSession.state === "thinking" ? "Thinking..." : "Ready"}
+              </span>
+            </span>
+          </div>
+          <div className="agent-pc-project">{hoveredSession.projectName}</div>
+          {(hoveredSession.preview || hoveredSession.windowTitle) && (
+            <div className="agent-pc-preview">
+              {hoveredSession.preview || hoveredSession.windowTitle}
+            </div>
+          )}
+          <div className="agent-pc-foot">Click icon to focus window</div>
+        </div>
+      )}
+
+      {/* Floating Timer Options Popover (on hover or click of Timer icon) */}
+      {showTimerPopover && (
+        <div
+          className="capsule-hover-popover"
+          role="dialog"
+          aria-label="Timer presets and custom duration"
+          onMouseEnter={() => setHoveredControl("timer")}
+          onMouseLeave={() => setHoveredControl((prev) => (prev === "timer" ? null : prev))}
+        >
+          <div className="popover-chips">
+            {[
+              { label: "30m", mins: 30 },
+              { label: "2h", mins: 120 },
+              { label: "8h", mins: 480 },
+            ].map((preset) => (
+              <button
+                key={preset.label}
+                type="button"
+                className="popover-chip"
+                onClick={() => {
+                  setTimerOpen(false);
+                  setHoveredControl(null);
+                  void window.nightowl?.startAwake(preset.mins).then((next) => next && setAwake(next));
+                }}
+              >
+                {preset.label}
+              </button>
+            ))}
+          </div>
+          <form
+            className="timer-fields"
+            onSubmit={(e) => {
+              handleSubmitTimer(e);
+              setHoveredControl(null);
+            }}
+          >
+            <input
+              type="text"
+              inputMode="numeric"
+              maxLength={2}
+              placeholder="D"
+              aria-label="Days"
+              value={days}
+              onChange={(e) => setDays(e.target.value.replace(/\D/g, ""))}
+            />
+            <input
+              ref={hoursInputRef}
+              type="text"
+              inputMode="numeric"
+              maxLength={2}
+              placeholder="H"
+              aria-label="Hours"
+              value={hours}
+              onChange={(e) => setHours(e.target.value.replace(/\D/g, ""))}
+            />
+            <input
+              type="text"
+              inputMode="numeric"
+              maxLength={2}
+              placeholder="M"
+              aria-label="Minutes"
+              value={minutes}
+              onChange={(e) => setMinutes(e.target.value.replace(/\D/g, ""))}
+            />
+            <button type="submit" className="timer-go" title="Start custom timer">
+              ✓
+            </button>
+          </form>
+        </div>
+      )}
+
+      {/* Floating Control Hint Pill (on hover of Quick Awake, Countdown, Screen, Stop) */}
+      {!menuOpen && !hoveredSession && !showTimerPopover && hoveredControl && (
+        <div className="capsule-hover-hint" role="status">
+          {hoveredControl === "awake" && "Quick Awake · Stay awake until stopped"}
+          {hoveredControl === "countdown" && "Click to add +30m"}
+          {hoveredControl === "screen" &&
+            (settings.keepDisplay ? "Screen: Stays lit" : "Screen: Turns off")}
+          {hoveredControl === "stop" && "Hold 0.6s to stop"}
         </div>
       )}
 
@@ -445,7 +550,10 @@ export const App: React.FC = () => {
               type="button"
               className={`agent-btn agent-${session.harness} ${session.state === "thinking" ? "is-thinking" : ""} ${session.hwnd ? "" : "no-hwnd"}`}
               onClick={() => void handleFocusAgent(session)}
-              onMouseEnter={() => setHoveredSession(session)}
+              onMouseEnter={() => {
+                setHoveredControl(null);
+                setHoveredSession(session);
+              }}
               onMouseLeave={() => setHoveredSession((cur) => (cur?.id === session.id ? null : cur))}
               aria-label={`${harnessDisplayName(session.harness)}: ${session.projectName}`}
             >
@@ -465,70 +573,53 @@ export const App: React.FC = () => {
           <OwlIcon awake={awake.active} size={25} theme={settings.theme} />
         </button>
 
-        {/* Expanded Asleep Controls: Seamless 2-button bar (Timer + Quick Awake) or D/H/M morph */}
+        {/* Expanded Asleep Controls: Icon-only Timer + Quick Awake (hover for options) */}
         {showAsleepActions && (
-          <div className="inline-timer-panel">
-            {!timerOpen ? (
-              <div className="capsule-action-pair">
-                <button
-                  type="button"
-                  className="capsule-pill-btn"
-                  onClick={handleToggleTimer}
-                  title="Set a custom timer (D / H / M)"
-                >
-                  <svg className="pill-ico" viewBox="0 0 16 16" aria-hidden="true">
-                    <circle cx="8" cy="8.5" r="5.5" fill="none" stroke="currentColor" strokeWidth="1.4" />
-                    <path d="M8 5.5v3l2 1.2M6.2 1.8h3.6" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-                  </svg>
-                  <span>Timer</span>
-                </button>
-                <button
-                  type="button"
-                  className="capsule-pill-btn is-accent"
-                  onClick={() => {
-                    void window.nightowl?.startAwake(null).then((next) => next && setAwake(next));
-                  }}
-                  title="Stay awake until stopped"
-                >
-                  <span className="pill-dot" aria-hidden="true" />
-                  <span>Awake</span>
-                </button>
-              </div>
-            ) : (
-              <form className="timer-fields" onSubmit={handleSubmitTimer}>
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  maxLength={2}
-                  placeholder="D"
-                  aria-label="Days"
-                  value={days}
-                  onChange={(e) => setDays(e.target.value.replace(/\D/g, ""))}
+          <div className="capsule-action-pair">
+            <button
+              type="button"
+              className={`capsule-icon-action ${timerOpen ? "is-active" : ""}`}
+              aria-label="Timer options"
+              onMouseEnter={() => {
+                setHoveredSession(null);
+                setHoveredControl("timer");
+              }}
+              onMouseLeave={() => setHoveredControl((prev) => (prev === "timer" ? null : prev))}
+              onClick={handleToggleTimer}
+            >
+              <svg viewBox="0 0 16 16" aria-hidden="true">
+                <circle cx="8" cy="8.5" r="5.5" fill="none" stroke="currentColor" strokeWidth="1.45" />
+                <path
+                  d="M8 5.5v3l2 1.2M6.2 1.8h3.6"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.45"
+                  strokeLinecap="round"
                 />
-                <input
-                  ref={hoursInputRef}
-                  type="text"
-                  inputMode="numeric"
-                  maxLength={2}
-                  placeholder="H"
-                  aria-label="Hours"
-                  value={hours}
-                  onChange={(e) => setHours(e.target.value.replace(/\D/g, ""))}
+              </svg>
+            </button>
+            <button
+              type="button"
+              className="capsule-icon-action is-accent"
+              aria-label="Quick Awake"
+              onMouseEnter={() => {
+                setHoveredSession(null);
+                setHoveredControl("awake");
+              }}
+              onMouseLeave={() => setHoveredControl((prev) => (prev === "awake" ? null : prev))}
+              onClick={() => {
+                setTimerOpen(false);
+                setHoveredControl(null);
+                void window.nightowl?.startAwake(null).then((next) => next && setAwake(next));
+              }}
+            >
+              <svg viewBox="0 0 16 16" aria-hidden="true">
+                <path
+                  d="M9.2 1.8L4.3 8.8h3.5l-1 5.4 4.9-7H8.2l1-5.4z"
+                  fill="currentColor"
                 />
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  maxLength={2}
-                  placeholder="M"
-                  aria-label="Minutes"
-                  value={minutes}
-                  onChange={(e) => setMinutes(e.target.value.replace(/\D/g, ""))}
-                />
-                <button type="submit" className="timer-go" title="Start timer">
-                  ✓
-                </button>
-              </form>
-            )}
+              </svg>
+            </button>
           </div>
         )}
 
@@ -538,23 +629,31 @@ export const App: React.FC = () => {
             <button
               type="button"
               className="countdown-btn"
+              aria-label="Remaining awake time, click to add 30 minutes"
+              onMouseEnter={() => {
+                setHoveredSession(null);
+                setHoveredControl("countdown");
+              }}
+              onMouseLeave={() => setHoveredControl((prev) => (prev === "countdown" ? null : prev))}
               onClick={handleAddTime}
-              title="Click to add 30 minutes"
             >
               <span>{awake.endsAt ? formatCountdown(liveRemainingMs) : "Awake"}</span>
-              {showExpandedAwakeExtras && <span className="countdown-add">+30m</span>}
             </button>
             {showExpandedAwakeExtras && (
               <button
                 type="button"
                 className={`capsule-icon-btn ${settings.keepDisplay ? "is-on" : ""}`}
+                aria-label={settings.keepDisplay ? "Screen stays lit" : "Screen turns off"}
+                onMouseEnter={() => {
+                  setHoveredSession(null);
+                  setHoveredControl("screen");
+                }}
+                onMouseLeave={() => setHoveredControl((prev) => (prev === "screen" ? null : prev))}
                 onClick={() => {
                   void window.nightowl?.updateSettings({ keepDisplay: !settings.keepDisplay }).then((next) => {
                     if (next) setSettings(next);
                   });
                 }}
-                aria-label={settings.keepDisplay ? "Screen stays lit" : "Allow screen to turn off"}
-                title={settings.keepDisplay ? "Screen stays lit (click to allow dimming)" : "Screen can turn off (click to keep lit)"}
               >
                 <svg viewBox="0 0 16 16" aria-hidden="true">
                   <rect x="2" y="3" width="12" height="8.5" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.35" />
@@ -571,11 +670,15 @@ export const App: React.FC = () => {
                   "--hold-deg": `${Math.round(holdProgress * 360)}deg`,
                 } as React.CSSProperties
               }
+              onMouseEnter={() => {
+                setHoveredSession(null);
+                setHoveredControl("stop");
+              }}
+              onMouseLeave={() => setHoveredControl((prev) => (prev === "stop" ? null : prev))}
               onPointerDown={startHoldToEnd}
               onPointerUp={cancelHold}
               onPointerLeave={cancelHold}
               onPointerCancel={cancelHold}
-              title="Hold to stop early"
               aria-label="Hold to end awake session"
             >
               ×

@@ -143,52 +143,79 @@ async function readTailText(filePath: string, maxBytes = 24 * 1024): Promise<str
   }
 }
 
+function clipPreview(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const cleaned = raw.replace(/\s+/g, " ").trim();
+  if (!cleaned) return null;
+  return cleaned.length > 72 ? `${cleaned.slice(0, 69)}...` : cleaned;
+}
+
+function extractClaudePreview(ev: Record<string, unknown>): string | null {
+  const msg = ev.message as Record<string, unknown> | undefined;
+  const content = msg?.content ?? ev.content;
+  if (typeof content === "string") return clipPreview(content);
+  if (Array.isArray(content)) {
+    for (const part of content) {
+      if (part && typeof part === "object") {
+        const p = part as Record<string, unknown>;
+        if (typeof p.text === "string" && p.text.trim()) return clipPreview(p.text);
+        if (p.type === "tool_use" && typeof p.name === "string") {
+          return clipPreview(`Using ${p.name}...`);
+        }
+      }
+    }
+  }
+  return null;
+}
+
 async function inspectClaudeJsonlState(
   jsonlPath: string,
   now: number,
   thinkingWindowMs: number
-): Promise<{ state: AgentSessionState; updatedAt: number }> {
+): Promise<{ state: AgentSessionState; updatedAt: number; preview: string | null }> {
   try {
     const stat = await fs.stat(jsonlPath);
     const age = now - stat.mtimeMs;
-    if (age <= thinkingWindowMs) {
-      return { state: "thinking", updatedAt: stat.mtimeMs };
-    }
+    const tail = await readTailText(jsonlPath);
+    const lines = tail
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter(Boolean);
 
-    if (age <= INFLIGHT_MAX_AGE_MS) {
-      const tail = await readTailText(jsonlPath);
-      const lines = tail
-        .split(/\r?\n/)
-        .map((l) => l.trim())
-        .filter(Boolean);
+    let preview: string | null = null;
+    let inferredState: AgentSessionState | null = null;
 
-      for (let i = lines.length - 1; i >= 0; i--) {
-        try {
-          const ev = JSON.parse(lines[i]) as Record<string, unknown>;
+    for (let i = lines.length - 1; i >= 0; i--) {
+      try {
+        const ev = JSON.parse(lines[i]) as Record<string, unknown>;
+        if (!preview) preview = extractClaudePreview(ev);
+        if (inferredState === null) {
           const type = String(ev.type || "");
           if (type === "user" || type === "progress") {
-            return { state: "thinking", updatedAt: stat.mtimeMs };
-          }
-          if (type === "assistant") {
+            inferredState = "thinking";
+          } else if (type === "assistant") {
             const msg = ev.message as Record<string, unknown> | undefined;
             const stopReason = msg?.stop_reason;
-            if (stopReason === "tool_use" || stopReason == null) {
-              return { state: "thinking", updatedAt: stat.mtimeMs };
-            }
-            return { state: "idle", updatedAt: stat.mtimeMs };
+            inferredState = stopReason === "tool_use" || stopReason == null ? "thinking" : "idle";
+          } else if (type === "result" || type === "system") {
+            inferredState = "idle";
           }
-          if (type === "result" || type === "system") {
-            return { state: "idle", updatedAt: stat.mtimeMs };
-          }
-        } catch {
-          // ignore partial trailing line
         }
+        if (preview && inferredState !== null) break;
+      } catch {
+        // ignore partial trailing line
       }
     }
 
-    return { state: "idle", updatedAt: stat.mtimeMs };
+    if (age <= thinkingWindowMs) {
+      return { state: "thinking", updatedAt: stat.mtimeMs, preview };
+    }
+    if (age <= INFLIGHT_MAX_AGE_MS && inferredState) {
+      return { state: inferredState, updatedAt: stat.mtimeMs, preview };
+    }
+    return { state: "idle", updatedAt: stat.mtimeMs, preview };
   } catch {
-    return { state: "idle", updatedAt: now };
+    return { state: "idle", updatedAt: now, preview: null };
   }
 }
 
@@ -226,25 +253,59 @@ async function findRecentFiles(dir: string, ext: string, maxDepth = 3): Promise<
   return results;
 }
 
+function extractCodexPreview(lines: string[]): string | null {
+  for (let i = lines.length - 1; i >= 0; i--) {
+    try {
+      const ev = JSON.parse(lines[i]) as Record<string, unknown>;
+      const type = String(ev.type || "");
+      const payload = ev.payload as Record<string, unknown> | undefined;
+      const payloadType = String(payload?.type || "");
+
+      if (type === "event_msg" && (payloadType === "user_message" || payloadType === "agent_message")) {
+        const msg = payload?.message ?? payload?.text;
+        if (typeof msg === "string" && msg.trim()) {
+          return clipPreview(msg);
+        }
+      }
+      if (type === "response_item" && payloadType === "function_call") {
+        const toolName = String(payload?.name || "");
+        if (toolName) return clipPreview(`Running ${toolName}`);
+      }
+      if (type === "response_item" && payloadType === "message" && Array.isArray(payload?.content)) {
+        for (let j = payload.content.length - 1; j >= 0; j--) {
+          const part = payload.content[j] as Record<string, unknown>;
+          if (typeof part?.text === "string" && part.text.trim()) {
+            return clipPreview(part.text);
+          }
+        }
+      }
+    } catch {
+      // ignore partial line
+    }
+  }
+  return null;
+}
+
 async function inspectCodexJsonlState(
   jsonlPath: string,
   now: number,
   thinkingWindowMs: number
-): Promise<{ state: AgentSessionState; updatedAt: number }> {
+): Promise<{ state: AgentSessionState; updatedAt: number; preview: string | null }> {
   try {
     const stat = await fs.stat(jsonlPath);
     const age = now - stat.mtimeMs;
+    const tail = await readTailText(jsonlPath);
+    const lines = tail
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter(Boolean);
+    const preview = extractCodexPreview(lines);
+
     if (age <= thinkingWindowMs) {
-      return { state: "thinking", updatedAt: stat.mtimeMs };
+      return { state: "thinking", updatedAt: stat.mtimeMs, preview };
     }
 
     if (age <= INFLIGHT_MAX_AGE_MS) {
-      const tail = await readTailText(jsonlPath);
-      const lines = tail
-        .split(/\r?\n/)
-        .map((l) => l.trim())
-        .filter(Boolean);
-
       for (let i = lines.length - 1; i >= 0; i--) {
         try {
           const ev = JSON.parse(lines[i]) as Record<string, unknown>;
@@ -256,16 +317,16 @@ async function inspectCodexJsonlState(
             type === "response_item" &&
             (payloadType === "function_call" || payloadType === "reasoning")
           ) {
-            return { state: "thinking", updatedAt: stat.mtimeMs };
+            return { state: "thinking", updatedAt: stat.mtimeMs, preview };
           }
           if (type === "event_msg" && payloadType === "user_message") {
-            return { state: "thinking", updatedAt: stat.mtimeMs };
+            return { state: "thinking", updatedAt: stat.mtimeMs, preview };
           }
           if (
             type === "event_msg" &&
             (payloadType === "task_complete" || payloadType === "agent_message" || payloadType === "turn_aborted")
           ) {
-            return { state: "idle", updatedAt: stat.mtimeMs };
+            return { state: "idle", updatedAt: stat.mtimeMs, preview };
           }
         } catch {
           // ignore partial line
@@ -273,9 +334,9 @@ async function inspectCodexJsonlState(
       }
     }
 
-    return { state: "idle", updatedAt: stat.mtimeMs };
+    return { state: "idle", updatedAt: stat.mtimeMs, preview };
   } catch {
-    return { state: "idle", updatedAt: now };
+    return { state: "idle", updatedAt: now, preview: null };
   }
 }
 
@@ -356,6 +417,8 @@ export class SessionScanner {
               let state: AgentSessionState = "idle";
               let updatedAt = data.startedAt ?? now;
 
+              let preview: string | null = win?.title ? clipPreview(win.title) : null;
+
               if (data.sessionId && data.cwd) {
                 const encoded = encodeClaudeProjectDir(data.cwd);
                 const jsonlPath = path.join(claudeProjectsDir, encoded, `${data.sessionId}.jsonl`);
@@ -366,6 +429,9 @@ export class SessionScanner {
                 );
                 state = inspected.state;
                 updatedAt = inspected.updatedAt;
+                if (inspected.preview) {
+                  preview = inspected.preview;
+                }
               }
 
               sessions.push({
@@ -377,6 +443,7 @@ export class SessionScanner {
                 hwnd: win?.hwnd ?? null,
                 pid: data.pid,
                 windowTitle: win?.title ?? null,
+                preview,
                 source: "cli",
                 updatedAt,
               });
@@ -409,6 +476,7 @@ export class SessionScanner {
         hwnd: win?.hwnd ?? null,
         pid: proc.pid,
         windowTitle: win?.title ?? null,
+        preview: win?.title ? clipPreview(win.title) : null,
         source: "cli",
         updatedAt: now,
       });
@@ -429,9 +497,10 @@ export class SessionScanner {
 
     const codexSessionsDir = path.join(this.homeDir, ".codex", "sessions");
     const recentLogs = await findRecentFiles(codexSessionsDir, ".jsonl", 4);
-    let latestCodexState: { state: AgentSessionState; updatedAt: number } = {
+    let latestCodexState: { state: AgentSessionState; updatedAt: number; preview: string | null } = {
       state: "idle",
       updatedAt: now,
+      preview: null,
     };
     if (recentLogs.length > 0 && now - recentLogs[0].mtimeMs <= INFLIGHT_MAX_AGE_MS) {
       latestCodexState = await inspectCodexJsonlState(
@@ -458,6 +527,7 @@ export class SessionScanner {
         hwnd: win.hwnd,
         pid: win.pid,
         windowTitle: win.title,
+        preview: latestCodexState.preview ?? (win.title ? clipPreview(win.title) : null),
         source: "desktop",
         updatedAt: latestCodexState.updatedAt,
       });
@@ -490,6 +560,7 @@ export class SessionScanner {
         hwnd: win?.hwnd ?? null,
         pid: proc.pid,
         windowTitle: win?.title ?? null,
+        preview: latestCodexState.preview ?? (win?.title ? clipPreview(win.title) : null),
         source: isCodexExe && win?.processName.toLowerCase() === "codex.exe" ? "desktop" : "cli",
         updatedAt: latestCodexState.updatedAt,
       });
@@ -531,6 +602,7 @@ export class SessionScanner {
         hwnd: win.hwnd,
         pid: win.pid,
         windowTitle: win.title,
+        preview: win.title ? clipPreview(win.title) : null,
         source: "desktop",
         updatedAt: agyUpdatedAt,
       });
@@ -572,6 +644,7 @@ export class SessionScanner {
         hwnd: win?.hwnd ?? null,
         pid: proc.pid,
         windowTitle: win?.title ?? null,
+        preview: win?.title ? clipPreview(win.title) : null,
         source: "cli",
         updatedAt: agyUpdatedAt,
       });
