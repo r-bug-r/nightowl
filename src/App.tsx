@@ -75,8 +75,9 @@ export const App: React.FC = () => {
   const holdStartRef = useRef<number>(0);
 
   // Dragging capsule
-  const dragRef = useRef<{ active: boolean; lastX: number; lastY: number }>({
+  const dragRef = useRef<{ active: boolean; moved: boolean; lastX: number; lastY: number }>({
     active: false,
+    moved: false,
     lastX: 0,
     lastY: 0,
   });
@@ -109,6 +110,27 @@ export const App: React.FC = () => {
       unsub?.();
     };
   }, []);
+
+  useEffect(() => {
+    if (isDiagnostics) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setMenuOpen(false);
+        setTimerOpen(false);
+      }
+    };
+    const onBlur = () => {
+      setMenuOpen(false);
+      setHovered(false);
+      setHoveredSession(null);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("blur", onBlur);
+    };
+  }, [isDiagnostics]);
 
   // Keep transparent window bounds matched to capsule + open popovers
   useEffect(() => {
@@ -195,7 +217,7 @@ export const App: React.FC = () => {
 
   const handleChevronPointerDown = (e: React.PointerEvent) => {
     if (e.button !== 0) return;
-    dragRef.current = { active: true, lastX: e.screenX, lastY: e.screenY };
+    dragRef.current = { active: true, moved: false, lastX: e.screenX, lastY: e.screenY };
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
   };
 
@@ -203,7 +225,8 @@ export const App: React.FC = () => {
     if (!dragRef.current.active) return;
     const dx = e.screenX - dragRef.current.lastX;
     const dy = e.screenY - dragRef.current.lastY;
-    if (Math.abs(dx) > 0 || Math.abs(dy) > 0) {
+    if (Math.abs(dx) >= 2 || Math.abs(dy) >= 2) {
+      dragRef.current.moved = true;
       dragRef.current.lastX = e.screenX;
       dragRef.current.lastY = e.screenY;
       window.nightowl?.moveCapsuleBy(dx, dy);
@@ -398,6 +421,10 @@ export const App: React.FC = () => {
           title="Options (or drag to move)"
           aria-label="Nightowl options"
           onClick={() => {
+            if (dragRef.current.moved) {
+              dragRef.current.moved = false;
+              return;
+            }
             setTimerOpen(false);
             setMenuOpen((prev) => !prev);
           }}

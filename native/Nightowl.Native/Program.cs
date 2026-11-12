@@ -46,7 +46,8 @@ internal static class Program
         long id = 0;
         try
         {
-            using var doc = JsonDocument.Parse(line);
+            var cleanLine = line.TrimStart('\uFEFF');
+            using var doc = JsonDocument.Parse(cleanLine);
             var root = doc.RootElement;
             if (root.TryGetProperty("id", out var idProp) && idProp.TryGetInt64(out var parsedId))
             {

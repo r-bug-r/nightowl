@@ -105,6 +105,22 @@ function findWindowForPid(
 
   if (preferredProject) {
     const lowerProj = preferredProject.toLowerCase();
+    const terminalOrIde = new Set([
+      "windowsterminal.exe",
+      "pwsh.exe",
+      "powershell.exe",
+      "cmd.exe",
+      "conhost.exe",
+      "mintty.exe",
+      "code.exe",
+    ]);
+    const preferredMatch = allWindows.find(
+      (w) =>
+        terminalOrIde.has(normalizeName(w.processName)) &&
+        w.title.toLowerCase().includes(lowerProj)
+    );
+    if (preferredMatch) return preferredMatch;
+
     const titleMatch = allWindows.find((w) => w.title.toLowerCase().includes(lowerProj));
     if (titleMatch) return titleMatch;
   }

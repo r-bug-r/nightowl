@@ -161,4 +161,33 @@ describe("SessionScanner", () => {
 
     expect(result).toHaveLength(0);
   });
+
+  it("prefers terminal or IDE windows over browser windows in title fallback", async () => {
+    const now = 1_700_000_000_000;
+    const claudeSessionsDir = path.join(tmpHome, ".claude", "sessions");
+    await fs.mkdir(claudeSessionsDir, { recursive: true });
+    await fs.writeFile(
+      path.join(claudeSessionsDir, "sess-term.json"),
+      JSON.stringify({ pid: 2001, sessionId: "sess-term", cwd: "C:\\dev\\nightowl", startedAt: now }),
+      "utf8"
+    );
+
+    const snapshot: NativeSnapshot = {
+      processes: [
+        { pid: 2001, parentPid: 999, name: "claude.exe" },
+      ],
+      windows: [
+        { hwnd: "101", pid: 3000, processName: "chrome.exe", title: "nightowl - GitHub", isMinimized: false },
+        { hwnd: "102", pid: 3001, processName: "WindowsTerminal.exe", title: "nightowl - claude", isMinimized: false },
+      ],
+      taskbar: { left: 0, top: 1032, right: 1920, bottom: 1080 },
+      workArea: { left: 0, top: 0, right: 1920, bottom: 1032 },
+    };
+
+    const scanner = new SessionScanner({ homeDir: tmpHome, now: () => now, selfPid: 99999 });
+    const result = await scanner.scan(snapshot);
+
+    expect(result).toHaveLength(1);
+    expect(result[0].hwnd).toBe("102");
+  });
 });

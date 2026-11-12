@@ -135,6 +135,7 @@ function applyCapsuleBounds(): void {
   if (!capsuleWindow || capsuleWindow.isDestroyed()) return;
   const x = Math.round(anchorRight - capsuleWidth);
   const y = Math.round(anchorBottom - capsuleHeight);
+  capsuleWindow.setResizable(true);
   capsuleWindow.setBounds(
     {
       x,
@@ -144,6 +145,7 @@ function applyCapsuleBounds(): void {
     },
     false
   );
+  capsuleWindow.setResizable(false);
 }
 
 function createOwlTrayImage(): Electron.NativeImage {
@@ -396,10 +398,34 @@ app.whenReady().then(async () => {
   registerIpc();
   tray = new Tray(createOwlTrayImage());
   tray.on("click", () => {
-    if (!capsuleWindow) return;
-    if (capsuleWindow.isVisible()) capsuleWindow.showInactive();
-    else capsuleWindow.showInactive();
+    if (!capsuleWindow || capsuleWindow.isDestroyed()) return;
+    if (capsuleWindow.isVisible()) {
+      capsuleWindow.moveTop();
+    } else {
+      capsuleWindow.showInactive();
+    }
   });
+
+  const keepCapsuleOnScreen = () => {
+    const displays = screen.getAllDisplays();
+    const visible = displays.some((d) => {
+      const wa = d.workArea;
+      return (
+        anchorRight > wa.x + 60 &&
+        anchorRight <= wa.x + wa.width + 40 &&
+        anchorBottom > wa.y + 40 &&
+        anchorBottom <= wa.y + wa.height + 40
+      );
+    });
+    if (!visible) {
+      const def = defaultCapsuleAnchor();
+      anchorRight = def.right;
+      anchorBottom = def.bottom;
+      applyCapsuleBounds();
+    }
+  };
+  screen.on("display-metrics-changed", keepCapsuleOnScreen);
+  screen.on("display-removed", keepCapsuleOnScreen);
 
   createCapsuleWindow();
   await pollLoop();

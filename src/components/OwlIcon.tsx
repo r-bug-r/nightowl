@@ -14,12 +14,16 @@ export const OwlIcon: React.FC<OwlIconProps> = ({ awake, size = 22 }) => {
       setBlinking(false);
       return;
     }
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
     const interval = setInterval(() => {
       setBlinking(true);
-      const t = setTimeout(() => setBlinking(false), 160);
-      return () => clearTimeout(t);
+      if (timeoutId) clearTimeout(timeoutId);
+      timeoutId = setTimeout(() => setBlinking(false), 160);
     }, 4400);
-    return () => clearInterval(interval);
+    return () => {
+      clearInterval(interval);
+      if (timeoutId) clearTimeout(timeoutId);
+    };
   }, [awake]);
 
   const open = awake ? (blinking ? 0.12 : 1) : 0.08;
