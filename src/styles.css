@@ -248,6 +248,71 @@ body,
   animation: agyFloat 1.5s ease-in-out infinite;
 }
 
+/* ---- Inline Expanded Timer & Quick Awake Chips ---- */
+
+.inline-timer-panel {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.quick-chips {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.quick-chip {
+  height: 24px;
+  padding: 0 7px;
+  border-radius: 6px;
+  border: 1px solid rgba(167, 243, 208, 0.22);
+  background: rgba(5, 13, 10, 0.72);
+  color: var(--mint);
+  font: 600 11px var(--mono);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+}
+
+.quick-chip:hover {
+  border-color: rgba(251, 191, 36, 0.55);
+  background: rgba(251, 191, 36, 0.14);
+  color: var(--yellow);
+}
+
+.quick-chip.is-on {
+  border-color: rgba(126, 231, 135, 0.55);
+  background: rgba(126, 231, 135, 0.14);
+  color: var(--emerald);
+}
+
+[data-theme="minimal-light"] .quick-chip {
+  background: #ffffff;
+  border-color: rgba(15, 23, 20, 0.16);
+  color: #0f1714;
+}
+
+[data-theme="minimal-light"] .quick-chip:hover {
+  border-color: #d97706;
+  background: rgba(217, 119, 6, 0.12);
+  color: #b45309;
+}
+
+[data-theme="minimal-light"] .timer-fields input {
+  background: #ffffff;
+  border-color: rgba(15, 23, 20, 0.18);
+  color: #0f1714;
+}
+
+[data-theme="minimal-light"] .timer-go {
+  background: rgba(217, 119, 6, 0.15);
+  border-color: #d97706;
+  color: #b45309;
+}
+
 /* ---- Timer Inputs & Countdown ---- */
 
 .timer-fields {
