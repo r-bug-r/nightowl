@@ -80,10 +80,13 @@ export const App: React.FC = () => {
   >(null);
   const [timerOpen, setTimerOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [anchorX, setAnchorX] = useState<number | null>(null);
-  const [floatingLeft, setFloatingLeft] = useState<number | undefined>(undefined);
+  const [anchorVersion, setAnchorVersion] = useState(0);
+  const [floatingRight, setFloatingRight] = useState<number | undefined>(undefined);
   const [caretOffset, setCaretOffset] = useState<number>(24);
   const floatingRef = useRef<HTMLDivElement | null>(null);
+  const floatingSlotRef = useRef<HTMLDivElement | null>(null);
+  const hoveredElRef = useRef<HTMLElement | null>(null);
+  const hoverGraceRef = useRef<number | null>(null);
 
   const [days, setDays] = useState("");
   const [hours, setHours] = useState("");
@@ -320,12 +323,32 @@ export const App: React.FC = () => {
     );
   }
 
+  const cancelHoverGrace = () => {
+    if (hoverGraceRef.current !== null) {
+      window.clearTimeout(hoverGraceRef.current);
+      hoverGraceRef.current = null;
+    }
+  };
+
+  const scheduleClearTimerHover = () => {
+    cancelHoverGrace();
+    hoverGraceRef.current = window.setTimeout(() => {
+      hoverGraceRef.current = null;
+      setHoveredControl((prev) => (prev === "timer" ? null : prev));
+    }, 150);
+  };
+
+  const scheduleClearOverflow = () => {
+    cancelHoverGrace();
+    hoverGraceRef.current = window.setTimeout(() => {
+      hoverGraceRef.current = null;
+      setHoveredOverflow(false);
+    }, 150);
+  };
+
   const updateAnchorFromTarget = (el: HTMLElement | null) => {
-    const stage = stageRef.current;
-    if (!el || !stage) return;
-    const stageRect = stage.getBoundingClientRect();
-    const rect = el.getBoundingClientRect();
-    setAnchorX(rect.left - stageRect.left + rect.width / 2);
+    hoveredElRef.current = el;
+    setAnchorVersion((v) => v + 1);
   };
 
   const visibleSessions = sessions.slice(0, MAX_VISIBLE_SESSIONS);
@@ -341,23 +364,42 @@ export const App: React.FC = () => {
     !menuOpen && !hoveredSession && !hoveredOverflow && !showTimerPopover && Boolean(hoveredControl);
 
   useLayoutEffect(() => {
-    const stage = stageRef.current;
+    const slot = floatingSlotRef.current;
     const floating = floatingRef.current;
-    if (!stage || !floating || anchorX === null) {
-      setFloatingLeft(undefined);
+    const target = hoveredElRef.current;
+    if (!slot || !floating || !target || !target.isConnected) {
+      setFloatingRight(undefined);
       return;
     }
-    const stageWidth = stage.clientWidth;
-    const floatingWidth = floating.offsetWidth;
-    const maxLeft = Math.max(4, stageWidth - floatingWidth - 4);
-    const clamped = Math.max(4, Math.min(maxLeft, Math.round(anchorX - floatingWidth / 2)));
-    setFloatingLeft(clamped);
-    setCaretOffset(Math.max(14, Math.min(floatingWidth - 14, Math.round(anchorX - clamped))));
-  }, [anchorX, hoveredSession, hoveredOverflow, showTimerPopover, showHintPill, hoveredControl]);
+
+    const measure = () => {
+      const slotRect = slot.getBoundingClientRect();
+      const targetRect = target.getBoundingClientRect();
+      const floatingWidth = floating.offsetWidth;
+      const anchorFromSlotRight = slotRect.right - (targetRect.left + targetRect.width / 2);
+      const maxRight = Math.max(0, slotRect.width - floatingWidth);
+      const clampedRight = Math.max(
+        0,
+        Math.min(maxRight, Math.round(anchorFromSlotRight - floatingWidth / 2))
+      );
+      setFloatingRight(clampedRight);
+      setCaretOffset(
+        Math.max(
+          14,
+          Math.min(floatingWidth - 14, Math.round(floatingWidth - (anchorFromSlotRight - clampedRight)))
+        )
+      );
+    };
+
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(slot);
+    return () => ro.disconnect();
+  }, [anchorVersion, hoveredSession, hoveredOverflow, showTimerPopover, showHintPill, hoveredControl, isCapsuleExpanded]);
 
   const floatingStyle =
-    floatingLeft !== undefined
-      ? ({ marginLeft: `${floatingLeft}px`, "--caret-x": `${caretOffset}px` } as React.CSSProperties)
+    floatingRight !== undefined
+      ? ({ marginRight: `${floatingRight}px`, "--caret-x": `${caretOffset}px` } as React.CSSProperties)
       : undefined;
 
   return (
@@ -365,8 +407,12 @@ export const App: React.FC = () => {
       className="tray-stage"
       data-theme={settings.theme || "forest"}
       ref={stageRef}
-      onMouseEnter={() => setHovered(true)}
+      onMouseEnter={() => {
+        cancelHoverGrace();
+        setHovered(true);
+      }}
       onMouseLeave={() => {
+        cancelHoverGrace();
         setHovered(false);
         setHoveredSession(null);
         setHoveredOverflow(false);
@@ -375,7 +421,7 @@ export const App: React.FC = () => {
     >
       {/* OMP Session HUD-style Floating Preview Card */}
       {!menuOpen && hoveredSession && (
-        <div className="floating-slot">
+        <div className="floating-slot" ref={floatingSlotRef}>
           <div
             ref={floatingRef}
             className="agent-preview-card has-caret"
@@ -416,15 +462,18 @@ export const App: React.FC = () => {
 
       {/* Overflow Sessions Card (+N) */}
       {!menuOpen && !hoveredSession && hoveredOverflow && overflowSessions.length > 0 && (
-        <div className="floating-slot">
+        <div className="floating-slot" ref={floatingSlotRef}>
           <div
             ref={floatingRef}
             className="agent-preview-card agent-overflow-card has-caret"
             role="dialog"
             aria-label="More active agent sessions"
             style={floatingStyle}
-            onMouseEnter={() => setHoveredOverflow(true)}
-            onMouseLeave={() => setHoveredOverflow(false)}
+            onMouseEnter={() => {
+              cancelHoverGrace();
+              setHoveredOverflow(true);
+            }}
+            onMouseLeave={scheduleClearOverflow}
           >
             <div className="agent-pc-head">
               <span className="agent-pc-harness">+{overflowSessions.length} more sessions</span>
@@ -452,15 +501,18 @@ export const App: React.FC = () => {
 
       {/* Floating Timer Options Popover (on hover or click of Timer icon) */}
       {showTimerPopover && (
-        <div className="floating-slot">
+        <div className="floating-slot" ref={floatingSlotRef}>
           <div
             ref={floatingRef}
             className="capsule-hover-popover has-caret"
             role="dialog"
             aria-label="Timer presets and custom duration"
             style={floatingStyle}
-            onMouseEnter={() => setHoveredControl("timer")}
-            onMouseLeave={() => setHoveredControl((prev) => (prev === "timer" ? null : prev))}
+            onMouseEnter={() => {
+              cancelHoverGrace();
+              setHoveredControl("timer");
+            }}
+            onMouseLeave={scheduleClearTimerHover}
           >
             <div className="popover-chips">
               {[
@@ -529,7 +581,7 @@ export const App: React.FC = () => {
 
       {/* Floating Control Hint Pill (on hover of Owl, Quick Awake, Countdown, Screen, Stop) */}
       {showHintPill && (
-        <div className="floating-slot">
+        <div className="floating-slot" ref={floatingSlotRef}>
           <div
             ref={floatingRef}
             className="capsule-hover-hint has-caret"
@@ -712,12 +764,13 @@ export const App: React.FC = () => {
               type="button"
               className="agent-overflow-pill"
               onMouseEnter={(e) => {
+                cancelHoverGrace();
                 updateAnchorFromTarget(e.currentTarget);
                 setHoveredControl(null);
                 setHoveredSession(null);
                 setHoveredOverflow(true);
               }}
-              onMouseLeave={() => setHoveredOverflow(false)}
+              onMouseLeave={scheduleClearOverflow}
               aria-label={`${overflowSessions.length} more active agent sessions`}
             >
               +{overflowSessions.length}
@@ -750,12 +803,14 @@ export const App: React.FC = () => {
               className={`capsule-icon-action ${timerOpen ? "is-active" : ""}`}
               aria-label="Timer options"
               onMouseEnter={(e) => {
+                cancelHoverGrace();
                 updateAnchorFromTarget(e.currentTarget);
                 setHoveredSession(null);
                 setHoveredControl("timer");
               }}
-              onMouseLeave={() => setHoveredControl((prev) => (prev === "timer" ? null : prev))}
+              onMouseLeave={scheduleClearTimerHover}
               onClick={(e) => {
+                cancelHoverGrace();
                 updateAnchorFromTarget(e.currentTarget);
                 handleToggleTimer();
               }}
