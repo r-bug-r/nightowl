@@ -5,6 +5,7 @@ import { OwlIcon } from "./components/OwlIcon";
 import type { AgentSession, AwakeState, NightowlSettings, ThemePreset } from "./types";
 
 const HOLD_TO_END_MS = 600;
+const MAX_VISIBLE_SESSIONS = 5;
 
 const DEFAULT_AWAKE: AwakeState = {
   active: false,
@@ -48,6 +49,16 @@ function formatCountdown(ms: number): string {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
+function formatRelativeAge(updatedAt: number, nowMs: number): string {
+  const sec = Math.max(0, Math.floor((nowMs - updatedAt) / 1000));
+  if (sec < 5) return "just now";
+  if (sec < 60) return `${sec}s ago`;
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.floor(min / 60);
+  return `${hr}h ago`;
+}
+
 export const App: React.FC = () => {
   const isDiagnostics = useMemo(
     () => new URLSearchParams(window.location.search).get("view") === "diagnostics",
@@ -63,13 +74,15 @@ export const App: React.FC = () => {
   // Capsule UI states
   const [hovered, setHovered] = useState(false);
   const [hoveredSession, setHoveredSession] = useState<AgentSession | null>(null);
+  const [hoveredOverflow, setHoveredOverflow] = useState(false);
   const [hoveredControl, setHoveredControl] = useState<
-    "timer" | "awake" | "countdown" | "screen" | "stop" | null
+    "owl" | "timer" | "awake" | "countdown" | "screen" | "stop" | null
   >(null);
   const [timerOpen, setTimerOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [anchorX, setAnchorX] = useState<number | null>(null);
   const [floatingLeft, setFloatingLeft] = useState<number | undefined>(undefined);
+  const [caretOffset, setCaretOffset] = useState<number>(24);
   const floatingRef = useRef<HTMLDivElement | null>(null);
 
   const [days, setDays] = useState("");
@@ -124,18 +137,33 @@ export const App: React.FC = () => {
       if (e.key === "Escape") {
         setMenuOpen(false);
         setTimerOpen(false);
+        setHoveredControl(null);
+        setHoveredSession(null);
+        setHoveredOverflow(false);
       }
     };
     const onBlur = () => {
       setMenuOpen(false);
+      setTimerOpen(false);
       setHovered(false);
       setHoveredSession(null);
+      setHoveredOverflow(false);
+      setHoveredControl(null);
+    };
+    const onPointerDown = (e: PointerEvent) => {
+      const stage = stageRef.current;
+      if (stage && !stage.contains(e.target as Node)) {
+        setMenuOpen(false);
+        setTimerOpen(false);
+      }
     };
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("blur", onBlur);
+    document.addEventListener("pointerdown", onPointerDown);
     return () => {
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("blur", onBlur);
+      document.removeEventListener("pointerdown", onPointerDown);
     };
   }, [isDiagnostics]);
 
@@ -157,6 +185,19 @@ export const App: React.FC = () => {
   }, [isDiagnostics, hovered, timerOpen, menuOpen, sessions.length, awake.active, hoveredSession]);
 
   const liveRemainingMs = awake.endsAt ? Math.max(0, awake.endsAt - nowMs) : 0;
+
+  const handleToggleQuickAwake = async () => {
+    setTimerOpen(false);
+    setMenuOpen(false);
+    setHoveredControl(null);
+    if (awake.active) {
+      const next = await window.nightowl?.stopAwake();
+      if (next) setAwake(next);
+    } else {
+      const next = await window.nightowl?.startAwake(null);
+      if (next) setAwake(next);
+    }
+  };
 
   const handleToggleTimer = () => {
     setMenuOpen(false);
@@ -287,12 +328,17 @@ export const App: React.FC = () => {
     setAnchorX(rect.left - stageRect.left + rect.width / 2);
   };
 
+  const visibleSessions = sessions.slice(0, MAX_VISIBLE_SESSIONS);
+  const overflowSessions = sessions.slice(MAX_VISIBLE_SESSIONS);
+
   const showAgentsStrip = hovered && sessions.length > 0;
   const showAsleepActions = !awake.active && (hovered || timerOpen);
   const showExpandedAwakeExtras = awake.active && hovered && !timerOpen;
-  const showTimerPopover = !menuOpen && !hoveredSession && (hoveredControl === "timer" || timerOpen);
+  const showTimerPopover =
+    !menuOpen && !hoveredSession && !hoveredOverflow && (hoveredControl === "timer" || timerOpen);
   const isCapsuleExpanded = showAgentsStrip || showAsleepActions || showExpandedAwakeExtras;
-  const showHintPill = !menuOpen && !hoveredSession && !showTimerPopover && Boolean(hoveredControl);
+  const showHintPill =
+    !menuOpen && !hoveredSession && !hoveredOverflow && !showTimerPopover && Boolean(hoveredControl);
 
   useLayoutEffect(() => {
     const stage = stageRef.current;
@@ -306,7 +352,13 @@ export const App: React.FC = () => {
     const maxLeft = Math.max(4, stageWidth - floatingWidth - 4);
     const clamped = Math.max(4, Math.min(maxLeft, Math.round(anchorX - floatingWidth / 2)));
     setFloatingLeft(clamped);
-  }, [anchorX, hoveredSession, showTimerPopover, showHintPill, hoveredControl]);
+    setCaretOffset(Math.max(14, Math.min(floatingWidth - 14, Math.round(anchorX - clamped))));
+  }, [anchorX, hoveredSession, hoveredOverflow, showTimerPopover, showHintPill, hoveredControl]);
+
+  const floatingStyle =
+    floatingLeft !== undefined
+      ? ({ marginLeft: `${floatingLeft}px`, "--caret-x": `${caretOffset}px` } as React.CSSProperties)
+      : undefined;
 
   return (
     <div
@@ -317,6 +369,7 @@ export const App: React.FC = () => {
       onMouseLeave={() => {
         setHovered(false);
         setHoveredSession(null);
+        setHoveredOverflow(false);
         setHoveredControl(null);
       }}
     >
@@ -325,9 +378,9 @@ export const App: React.FC = () => {
         <div className="floating-slot">
           <div
             ref={floatingRef}
-            className="agent-preview-card"
+            className="agent-preview-card has-caret"
             role="status"
-            style={floatingLeft !== undefined ? { marginLeft: `${floatingLeft}px` } : undefined}
+            style={floatingStyle}
           >
             <div className="agent-pc-head">
               <span className="agent-pc-brand">
@@ -353,7 +406,46 @@ export const App: React.FC = () => {
                 {hoveredSession.preview || hoveredSession.windowTitle}
               </div>
             )}
-            <div className="agent-pc-foot">Click icon to focus window</div>
+            <div className="agent-pc-foot">
+              <span>{formatRelativeAge(hoveredSession.updatedAt, nowMs)}</span>
+              <span>Click icon to focus</span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Overflow Sessions Card (+N) */}
+      {!menuOpen && !hoveredSession && hoveredOverflow && overflowSessions.length > 0 && (
+        <div className="floating-slot">
+          <div
+            ref={floatingRef}
+            className="agent-preview-card agent-overflow-card has-caret"
+            role="dialog"
+            aria-label="More active agent sessions"
+            style={floatingStyle}
+            onMouseEnter={() => setHoveredOverflow(true)}
+            onMouseLeave={() => setHoveredOverflow(false)}
+          >
+            <div className="agent-pc-head">
+              <span className="agent-pc-harness">+{overflowSessions.length} more sessions</span>
+              <span className="agent-pc-source">{sessions.length} total</span>
+            </div>
+            <div className="overflow-list">
+              {overflowSessions.map((s) => (
+                <button
+                  key={s.id}
+                  type="button"
+                  className="overflow-row"
+                  onClick={() => void handleFocusAgent(s)}
+                >
+                  <HarnessIcon harness={s.harness} state={s.state} size={13} />
+                  <span className="overflow-proj">{s.projectName}</span>
+                  <span className={`agent-pc-state ${s.state === "thinking" ? "is-thinking" : ""}`}>
+                    {s.state === "thinking" ? "Thinking" : "Ready"}
+                  </span>
+                </button>
+              ))}
+            </div>
           </div>
         </div>
       )}
@@ -363,10 +455,10 @@ export const App: React.FC = () => {
         <div className="floating-slot">
           <div
             ref={floatingRef}
-            className="capsule-hover-popover"
+            className="capsule-hover-popover has-caret"
             role="dialog"
             aria-label="Timer presets and custom duration"
-            style={floatingLeft !== undefined ? { marginLeft: `${floatingLeft}px` } : undefined}
+            style={floatingStyle}
             onMouseEnter={() => setHoveredControl("timer")}
             onMouseLeave={() => setHoveredControl((prev) => (prev === "timer" ? null : prev))}
           >
@@ -383,7 +475,9 @@ export const App: React.FC = () => {
                   onClick={() => {
                     setTimerOpen(false);
                     setHoveredControl(null);
-                    void window.nightowl?.startAwake(preset.mins).then((next) => next && setAwake(next));
+                    void window.nightowl
+                      ?.startAwake(preset.mins * 60_000)
+                      .then((next) => next && setAwake(next));
                   }}
                 >
                   {preset.label}
@@ -433,17 +527,22 @@ export const App: React.FC = () => {
         </div>
       )}
 
-      {/* Floating Control Hint Pill (on hover of Quick Awake, Countdown, Screen, Stop) */}
+      {/* Floating Control Hint Pill (on hover of Owl, Quick Awake, Countdown, Screen, Stop) */}
       {showHintPill && (
         <div className="floating-slot">
           <div
             ref={floatingRef}
-            className="capsule-hover-hint"
+            className="capsule-hover-hint has-caret"
             role="status"
-            style={floatingLeft !== undefined ? { marginLeft: `${floatingLeft}px` } : undefined}
+            style={floatingStyle}
           >
+            {hoveredControl === "owl" &&
+              (awake.active ? "Click to allow sleep · Ctrl+Shift+O" : "Click to stay awake · Ctrl+Shift+O")}
             {hoveredControl === "awake" && "Quick Awake · Stay awake until stopped"}
-            {hoveredControl === "countdown" && "Click to add +30m"}
+            {hoveredControl === "countdown" &&
+              (awake.autoAwakeActive && !awake.endsAt
+                ? "Auto-awake · Agent is thinking"
+                : "Click to add +30m")}
             {hoveredControl === "screen" &&
               (settings.keepDisplay ? "Screen: Stays lit" : "Screen: Turns off")}
             {hoveredControl === "stop" && "Hold 0.6s to stop"}
@@ -554,7 +653,9 @@ export const App: React.FC = () => {
 
       {/* Main Nightowl System Tray Capsule */}
       <div
-        className={`capsule ${awake.active ? "is-awake" : ""} ${isCapsuleExpanded ? "is-expanded" : ""}`}
+        className={`capsule ${awake.active ? "is-awake" : ""} ${
+          awake.autoAwakeActive && !awake.endsAt ? "is-auto-awake" : ""
+        } ${isCapsuleExpanded ? "is-expanded" : ""}`}
         onContextMenu={(e) => {
           e.preventDefault();
           setTimerOpen(false);
@@ -588,7 +689,7 @@ export const App: React.FC = () => {
 
         {/* Expandable Agent Sessions Strip (on hover) */}
         <div className={`agent-strip ${showAgentsStrip ? "open" : ""}`}>
-          {sessions.map((session) => (
+          {visibleSessions.map((session) => (
             <button
               key={session.id}
               type="button"
@@ -597,6 +698,7 @@ export const App: React.FC = () => {
               onMouseEnter={(e) => {
                 updateAnchorFromTarget(e.currentTarget);
                 setHoveredControl(null);
+                setHoveredOverflow(false);
                 setHoveredSession(session);
               }}
               onMouseLeave={() => setHoveredSession((cur) => (cur?.id === session.id ? null : cur))}
@@ -605,18 +707,37 @@ export const App: React.FC = () => {
               <HarnessIcon harness={session.harness} state={session.state} size={17} />
             </button>
           ))}
+          {overflowSessions.length > 0 && (
+            <button
+              type="button"
+              className="agent-overflow-pill"
+              onMouseEnter={(e) => {
+                updateAnchorFromTarget(e.currentTarget);
+                setHoveredControl(null);
+                setHoveredSession(null);
+                setHoveredOverflow(true);
+              }}
+              onMouseLeave={() => setHoveredOverflow(false)}
+              aria-label={`${overflowSessions.length} more active agent sessions`}
+            >
+              +{overflowSessions.length}
+            </button>
+          )}
         </div>
 
-        {/* Golden Ring + Owl Mascot */}
+        {/* Golden Ring + Owl Mascot (1-click Quick Awake toggle) */}
         <button
           type="button"
           className="owl-ring-btn"
-          onClick={(e) => {
+          onMouseEnter={(e) => {
             updateAnchorFromTarget(e.currentTarget);
-            handleToggleTimer();
+            setHoveredSession(null);
+            setHoveredOverflow(false);
+            setHoveredControl("owl");
           }}
-          aria-label={awake.active ? "Set or adjust timer" : "Set an awake timer"}
-          title={awake.active ? "Click to set a new timer" : "Click to set an awake timer"}
+          onMouseLeave={() => setHoveredControl((prev) => (prev === "owl" ? null : prev))}
+          onClick={() => void handleToggleQuickAwake()}
+          aria-label={awake.active ? "Allow sleep" : "Keep PC awake"}
         >
           <OwlIcon awake={awake.active} size={25} theme={settings.theme} />
         </button>
@@ -681,17 +802,25 @@ export const App: React.FC = () => {
           <div className="awake-controls">
             <button
               type="button"
-              className="countdown-btn"
+              className={`countdown-btn ${awake.autoAwakeActive && !awake.endsAt ? "is-auto" : ""}`}
               aria-label="Remaining awake time, click to add 30 minutes"
               onMouseEnter={(e) => {
                 updateAnchorFromTarget(e.currentTarget);
                 setHoveredSession(null);
+                setHoveredOverflow(false);
                 setHoveredControl("countdown");
               }}
               onMouseLeave={() => setHoveredControl((prev) => (prev === "countdown" ? null : prev))}
               onClick={handleAddTime}
             >
-              <span>{awake.endsAt ? formatCountdown(liveRemainingMs) : "Awake"}</span>
+              {awake.autoAwakeActive && !awake.endsAt ? (
+                <>
+                  <span className="auto-dot" aria-hidden="true" />
+                  <span>Auto</span>
+                </>
+              ) : (
+                <span>{awake.endsAt ? formatCountdown(liveRemainingMs) : "Awake"}</span>
+              )}
             </button>
             {showExpandedAwakeExtras && (
               <button

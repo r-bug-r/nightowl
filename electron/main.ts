@@ -1,4 +1,5 @@
-import { app, BrowserWindow, ipcMain, Menu, nativeImage, screen, Tray } from "electron";
+import { app, BrowserWindow, globalShortcut, ipcMain, Menu, nativeImage, screen, Tray } from "electron";
+import fs from "node:fs/promises";
 import path from "node:path";
 import { NativeBridge } from "./nativeBridge";
 import { SessionJournal } from "./sessionJournal";
@@ -45,6 +46,58 @@ let anchorRight = 0;
 let anchorBottom = 0;
 let capsuleWidth = 230;
 let capsuleHeight = 56;
+let settingsFilePath = "";
+let persistTimer: NodeJS.Timeout | null = null;
+
+interface PersistedConfig {
+  settings?: Partial<NightowlSettings>;
+  anchorRight?: number;
+  anchorBottom?: number;
+}
+
+async function loadPersistedConfig(): Promise<void> {
+  if (!settingsFilePath) return;
+  try {
+    const raw = await fs.readFile(settingsFilePath, "utf8");
+    const parsed = JSON.parse(raw) as PersistedConfig;
+    if (parsed.settings && typeof parsed.settings === "object") {
+      settings = { ...settings, ...parsed.settings };
+    }
+    if (
+      typeof parsed.anchorRight === "number" &&
+      Number.isFinite(parsed.anchorRight) &&
+      typeof parsed.anchorBottom === "number" &&
+      Number.isFinite(parsed.anchorBottom)
+    ) {
+      anchorRight = parsed.anchorRight;
+      anchorBottom = parsed.anchorBottom;
+    }
+  } catch {
+    // first launch or unreadable config; use defaults
+  }
+}
+
+async function savePersistedConfigNow(): Promise<void> {
+  if (!settingsFilePath) return;
+  try {
+    const payload: PersistedConfig = {
+      settings,
+      anchorRight,
+      anchorBottom,
+    };
+    await fs.writeFile(settingsFilePath, JSON.stringify(payload, null, 2), "utf8");
+  } catch {
+    // ignore write failure
+  }
+}
+
+function schedulePersistConfig(): void {
+  if (persistTimer) clearTimeout(persistTimer);
+  persistTimer = setTimeout(() => {
+    persistTimer = null;
+    void savePersistedConfigNow();
+  }, 350);
+}
 
 function computeAwakeState(): AwakeState {
   const now = Date.now();
@@ -349,6 +402,7 @@ function registerIpc(): void {
 
   ipcMain.handle("nightowl:updateSettings", async (_ev, patch: Partial<NightowlSettings>) => {
     settings = { ...settings, ...patch };
+    schedulePersistConfig();
     await syncPowerAssertion();
     broadcastState();
     return settings;
@@ -371,6 +425,7 @@ function registerIpc(): void {
     anchorRight += delta.dx;
     anchorBottom += delta.dy;
     applyCapsuleBounds();
+    schedulePersistConfig();
   });
 
   ipcMain.on("nightowl:resetCapsulePosition", () => {
@@ -378,6 +433,7 @@ function registerIpc(): void {
     anchorRight = def.right;
     anchorBottom = def.bottom;
     applyCapsuleBounds();
+    schedulePersistConfig();
   });
 
   ipcMain.on("nightowl:openDiagnostics", () => openDiagnosticsWindow());
@@ -386,7 +442,10 @@ function registerIpc(): void {
 
 app.whenReady().then(async () => {
   const userDataDir = app.getPath("userData");
+  settingsFilePath = path.join(userDataDir, "settings.json");
   journal = new SessionJournal(path.join(userDataDir, "session.json"));
+
+  await loadPersistedConfig();
 
   nativeBridge.start();
   const recovery = await journal.reconcileOnStartup();
@@ -397,7 +456,15 @@ app.whenReady().then(async () => {
   await nativeBridge.setAwake(false, false);
 
   registerIpc();
+  globalShortcut.register("CommandOrControl+Shift+O", () => {
+    if (manualAwake || autoAwakeActive) {
+      void stopAwake();
+    } else {
+      void startAwake(null);
+    }
+  });
   tray = new Tray(createOwlTrayImage());
+  tray.setToolTip("Nightowl (Ctrl+Shift+O to toggle awake)");
   tray.on("click", () => {
     if (!capsuleWindow || capsuleWindow.isDestroyed()) return;
     if (capsuleWindow.isVisible()) {
@@ -425,6 +492,7 @@ app.whenReady().then(async () => {
       applyCapsuleBounds();
     }
   };
+  keepCapsuleOnScreen();
   screen.on("display-metrics-changed", keepCapsuleOnScreen);
   screen.on("display-removed", keepCapsuleOnScreen);
 
@@ -434,7 +502,12 @@ app.whenReady().then(async () => {
 });
 
 app.on("before-quit", () => {
+  globalShortcut.unregisterAll();
   if (pollTimer) clearInterval(pollTimer);
+  if (persistTimer) {
+    clearTimeout(persistTimer);
+    void savePersistedConfigNow();
+  }
   void journal?.clear(true);
   void nativeBridge.stop();
 });
