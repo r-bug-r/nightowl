@@ -28,6 +28,7 @@ export class NativeBridge {
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
     });
+    this.proc.stderr?.resume();
 
     const rl = readline.createInterface({ input: this.proc.stdout });
     rl.on("line", (line) => {
@@ -52,13 +53,16 @@ export class NativeBridge {
       }
     });
 
-    this.proc.on("exit", () => {
+    const rejectAll = (reason: string) => {
       for (const [, entry] of this.pending) {
-        entry.reject(new Error("Native helper exited"));
+        entry.reject(new Error(reason));
       }
       this.pending.clear();
       this.proc = null;
-    });
+    };
+
+    this.proc.on("error", (err) => rejectAll(`Native helper error: ${err.message}`));
+    this.proc.on("exit", () => rejectAll("Native helper exited"));
   }
 
   private call<T>(cmd: string, payload: Record<string, unknown> = {}): Promise<T> {
@@ -71,12 +75,29 @@ export class NativeBridge {
         reject(new Error("Native helper stdin not writable"));
         return;
       }
+      const timer = setTimeout(() => {
+        if (this.pending.delete(id)) {
+          reject(new Error(`Native helper call timed out: ${cmd}`));
+        }
+      }, 10_000);
       this.pending.set(id, {
-        resolve: (v) => resolve(v as T),
-        reject,
+        resolve: (v) => {
+          clearTimeout(timer);
+          resolve(v as T);
+        },
+        reject: (err) => {
+          clearTimeout(timer);
+          reject(err);
+        },
       });
-      const line = JSON.stringify({ id, cmd, ...payload });
-      this.proc.stdin.write(`${line}\n`);
+      try {
+        const line = JSON.stringify({ id, cmd, ...payload });
+        this.proc.stdin.write(`${line}\n`);
+      } catch (err) {
+        clearTimeout(timer);
+        this.pending.delete(id);
+        reject(err instanceof Error ? err : new Error(String(err)));
+      }
     });
   }
 
@@ -94,6 +115,10 @@ export class NativeBridge {
 
   async focusWindow(hwnd: string): Promise<{ focused: boolean; reason?: string }> {
     return this.call<{ focused: boolean; reason?: string }>("focusWindow", { hwnd });
+  }
+
+  async stripWindowChrome(hwnd: string): Promise<{ stripped: boolean }> {
+    return this.call<{ stripped: boolean }>("stripWindowChrome", { hwnd });
   }
 
   async stop(): Promise<void> {

@@ -24,6 +24,11 @@ let settings: NightowlSettings = {
   keepDisplay: false,
   autoAwakeForAgents: false,
   theme: "forest",
+  capsuleScale: 1,
+  capsuleOrder: ["agents", "owl", "time"],
+  hoverAnimation: "slow",
+  clockFormat24h: false,
+  showClock: true,
 };
 
 let powerStatus: PowerStatus = {
@@ -44,8 +49,12 @@ let sessions: AgentSession[] = [];
 // Anchor bottom-right corner of capsule window
 let anchorRight = 0;
 let anchorBottom = 0;
-let capsuleWidth = 230;
-let capsuleHeight = 56;
+// Fixed-size transparent canvas; never resized at runtime (prevents flicker + upward jumps)
+const CANVAS_WIDTH = 640;
+const CANVAS_HEIGHT = 420;
+let capsuleWidth = CANVAS_WIDTH;
+let capsuleHeight = CANVAS_HEIGHT;
+let lastAppliedBounds: { x: number; y: number; width: number; height: number } | null = null;
 let settingsFilePath = "";
 let persistTimer: NodeJS.Timeout | null = null;
 
@@ -185,32 +194,56 @@ function defaultCapsuleAnchor(): { right: number; bottom: number } {
   };
 }
 
+function clampAnchorToDisplays(right: number, bottom: number): { right: number; bottom: number } {
+  const displays = screen.getAllDisplays();
+  let minX = Number.POSITIVE_INFINITY;
+  let minY = Number.POSITIVE_INFINITY;
+  let maxX = Number.NEGATIVE_INFINITY;
+  let maxY = Number.NEGATIVE_INFINITY;
+  for (const d of displays) {
+    minX = Math.min(minX, d.workArea.x);
+    minY = Math.min(minY, d.workArea.y);
+    maxX = Math.max(maxX, d.workArea.x + d.workArea.width);
+    maxY = Math.max(maxY, d.workArea.y + d.workArea.height);
+  }
+  if (!Number.isFinite(minX)) return { right, bottom };
+  return {
+    right: Math.max(minX + 80, Math.min(maxX + 12, right)),
+    bottom: Math.max(minY + 40, Math.min(maxY + 12, bottom)),
+  };
+}
+
 function applyCapsuleBounds(): void {
   if (!capsuleWindow || capsuleWindow.isDestroyed()) return;
-  const x = Math.round(anchorRight - capsuleWidth);
-  const y = Math.round(anchorBottom - capsuleHeight);
-  capsuleWindow.setResizable(true);
-  capsuleWindow.setBounds(
-    {
-      x,
-      y,
-      width: Math.max(180, Math.round(capsuleWidth)),
-      height: Math.max(48, Math.round(capsuleHeight)),
-    },
-    false
-  );
-  capsuleWindow.setResizable(false);
+  const width = Math.max(120, Math.round(capsuleWidth));
+  const height = Math.max(36, Math.round(capsuleHeight));
+  const x = Math.round(anchorRight - width);
+  const y = Math.round(anchorBottom - height);
+  if (
+    lastAppliedBounds &&
+    lastAppliedBounds.x === x &&
+    lastAppliedBounds.y === y &&
+    lastAppliedBounds.width === width &&
+    lastAppliedBounds.height === height
+  ) {
+    return;
+  }
+  lastAppliedBounds = { x, y, width, height };
+  capsuleWindow.setBounds({ x, y, width, height }, false);
 }
 
 function createOwlTrayImage(): Electron.NativeImage {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24">
     <circle cx="12" cy="12" r="11" fill="#050d0a" stroke="#fbbf24" stroke-width="1.8"/>
-    <path d="M5.5 7.5 L8 9.2 L12 10.2 L16 9.2 L18.5 7.5 C19.3 10.5 18.8 14.8 16.5 17.5 C14.5 18.8 9.5 18.8 7.5 17.5 C5.2 14.8 4.7 10.5 5.5 7.5 Z" fill="#0a1612" stroke="#eefbf4" stroke-width="1.2" stroke-linejoin="round"/>
-    <circle cx="9" cy="11.5" r="2.2" fill="#fbbf24"/>
-    <circle cx="15" cy="11.5" r="2.2" fill="#fbbf24"/>
-    <circle cx="9" cy="11.5" r="1.1" fill="#050d0a"/>
-    <circle cx="15" cy="11.5" r="1.1" fill="#050d0a"/>
-    <polygon points="11.2,12.8 12,14.8 12.8,12.8" fill="#f59e0b"/>
+    <path d="M4.8 6.0 L8.0 8.2 Q12 7.3 16.0 8.2 L19.2 6.0 C20.3 9.7 19.9 15.2 17.2 18.3 C15.0 19.8 9.0 19.8 6.8 18.3 C4.1 15.2 3.7 9.7 4.8 6.0 Z" fill="#0b1914" stroke="#f0fdf4" stroke-width="1.2" stroke-linejoin="round"/>
+    <path d="M6.0 8.5 L12 10.6 L18.0 8.5" fill="none" stroke="#fbbf24" stroke-width="0.95" stroke-linecap="round"/>
+    <circle cx="8.6" cy="12" r="2.6" fill="#fbbf24"/>
+    <circle cx="15.4" cy="12" r="2.6" fill="#fbbf24"/>
+    <circle cx="8.6" cy="12" r="1.25" fill="#050d0a"/>
+    <circle cx="15.4" cy="12" r="1.25" fill="#050d0a"/>
+    <circle cx="7.9" cy="11.2" r="0.55" fill="#ffffff"/>
+    <circle cx="14.7" cy="11.2" r="0.55" fill="#ffffff"/>
+    <polygon points="12,12.6 13.0,14.0 12,15.8 11.0,14.0" fill="#f59e0b"/>
   </svg>`;
   return nativeImage.createFromDataURL(
     `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`
@@ -250,6 +283,7 @@ function refreshTrayMenu(): void {
         anchorRight = def.right;
         anchorBottom = def.bottom;
         applyCapsuleBounds();
+        schedulePersistConfig();
       },
     },
     { label: "Settings & Diagnostics...", click: () => openDiagnosticsWindow() },
@@ -262,17 +296,27 @@ function refreshTrayMenu(): void {
 }
 
 function createCapsuleWindow(): void {
-  const def = defaultCapsuleAnchor();
-  anchorRight = def.right;
-  anchorBottom = def.bottom;
+  if (anchorRight === 0 && anchorBottom === 0) {
+    const def = defaultCapsuleAnchor();
+    anchorRight = def.right;
+    anchorBottom = def.bottom;
+  } else {
+    const clamped = clampAnchorToDisplays(anchorRight, anchorBottom);
+    anchorRight = clamped.right;
+    anchorBottom = clamped.bottom;
+  }
 
   capsuleWindow = new BrowserWindow({
+    title: "",
     width: capsuleWidth,
     height: capsuleHeight,
     x: Math.round(anchorRight - capsuleWidth),
     y: Math.round(anchorBottom - capsuleHeight),
     frame: false,
+    thickFrame: false,
+    roundedCorners: false,
     transparent: true,
+    backgroundColor: "#00000000",
     alwaysOnTop: true,
     skipTaskbar: true,
     resizable: false,
@@ -288,8 +332,14 @@ function createCapsuleWindow(): void {
     },
   });
 
+  capsuleWindow.on("page-title-updated", (e) => {
+    e.preventDefault();
+    capsuleWindow?.setTitle("");
+  });
+
   capsuleWindow.setAlwaysOnTop(true, "screen-saver");
   capsuleWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  capsuleWindow.setIgnoreMouseEvents(true, { forward: true });
 
   if (isDev) {
     void capsuleWindow.loadURL(DEV_URL);
@@ -298,8 +348,22 @@ function createCapsuleWindow(): void {
   }
 
   capsuleWindow.once("ready-to-show", () => {
-    capsuleWindow?.showInactive();
-    broadcastState();
+    if (capsuleWindow && !capsuleWindow.isDestroyed()) {
+      try {
+        const handleBuf = capsuleWindow.getNativeWindowHandle();
+        if (handleBuf.length >= 8) {
+          const hwnd = handleBuf.readBigInt64LE(0).toString();
+          void nativeBridge.stripWindowChrome(hwnd);
+        } else if (handleBuf.length >= 4) {
+          const hwnd = handleBuf.readInt32LE(0).toString();
+          void nativeBridge.stripWindowChrome(hwnd);
+        }
+      } catch {
+        // ignore handle read error
+      }
+      capsuleWindow.showInactive();
+      broadcastState();
+    }
   });
 
   capsuleWindow.on("closed", () => {
@@ -315,12 +379,14 @@ function openDiagnosticsWindow(): void {
   }
 
   diagnosticsWindow = new BrowserWindow({
-    width: 520,
-    height: 540,
+    width: 620,
+    height: 700,
+    minWidth: 520,
+    minHeight: 540,
     title: "Nightowl Settings & Diagnostics",
     backgroundColor: "#050d0a",
     autoHideMenuBar: true,
-    resizable: false,
+    resizable: true,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
@@ -341,7 +407,11 @@ function openDiagnosticsWindow(): void {
   });
 }
 
+let pollInFlight = false;
+
 async function pollLoop(): Promise<void> {
+  if (pollInFlight) return;
+  pollInFlight = true;
   try {
     const [nextPower, snapshot] = await Promise.all([
       nativeBridge.getPowerStatus(),
@@ -382,6 +452,8 @@ async function pollLoop(): Promise<void> {
     broadcastState();
   } catch {
     // keep polling resilient
+  } finally {
+    pollInFlight = false;
   }
 }
 
@@ -401,7 +473,26 @@ function registerIpc(): void {
   ipcMain.handle("nightowl:stopAwake", () => stopAwake());
 
   ipcMain.handle("nightowl:updateSettings", async (_ev, patch: Partial<NightowlSettings>) => {
-    settings = { ...settings, ...patch };
+    const nextPatch = { ...patch };
+    if (typeof nextPatch.capsuleScale === "number" && Number.isFinite(nextPatch.capsuleScale)) {
+      nextPatch.capsuleScale = Math.max(0.75, Math.min(1.6, Math.round(nextPatch.capsuleScale * 100) / 100));
+    }
+    if (typeof nextPatch.batteryThreshold === "number" && Number.isFinite(nextPatch.batteryThreshold)) {
+      nextPatch.batteryThreshold = Math.max(5, Math.min(50, Math.round(nextPatch.batteryThreshold)));
+    }
+    if (Array.isArray(nextPatch.capsuleOrder)) {
+      const valid = ["agents", "owl", "time"] as const;
+      const filtered = nextPatch.capsuleOrder.filter((s): s is (typeof valid)[number] =>
+        valid.includes(s as (typeof valid)[number])
+      );
+      const unique = Array.from(new Set(filtered));
+      if (unique.length === 3) {
+        nextPatch.capsuleOrder = unique;
+      } else {
+        delete nextPatch.capsuleOrder;
+      }
+    }
+    settings = { ...settings, ...nextPatch };
     schedulePersistConfig();
     await syncPowerAssertion();
     broadcastState();
@@ -409,21 +500,26 @@ function registerIpc(): void {
   });
 
   ipcMain.handle("nightowl:focusSession", async (_ev, hwnd: string) => {
+    if (capsuleWindow && !capsuleWindow.isDestroyed() && capsuleWindow.isFocused()) {
+      capsuleWindow.blur();
+    }
     return nativeBridge.focusWindow(hwnd);
   });
 
-  ipcMain.on(
-    "nightowl:resizeCapsule",
-    (_ev, size: { width: number; height: number }) => {
-      capsuleWidth = Math.max(180, Math.min(920, Math.ceil(size.width)));
-      capsuleHeight = Math.max(48, Math.min(460, Math.ceil(size.height)));
-      applyCapsuleBounds();
-    }
-  );
+  ipcMain.on("nightowl:resizeCapsule", () => {
+    // Intentionally ignored: canvas is fixed-size to avoid resize flicker.
+  });
+
+  ipcMain.on("nightowl:setIgnoreMouse", (_ev, ignore: boolean) => {
+    if (!capsuleWindow || capsuleWindow.isDestroyed()) return;
+    if (ignore) capsuleWindow.setIgnoreMouseEvents(true, { forward: true });
+    else capsuleWindow.setIgnoreMouseEvents(false);
+  });
 
   ipcMain.on("nightowl:moveCapsuleBy", (_ev, delta: { dx: number; dy: number }) => {
-    anchorRight += delta.dx;
-    anchorBottom += delta.dy;
+    const clamped = clampAnchorToDisplays(anchorRight + delta.dx, anchorBottom + delta.dy);
+    anchorRight = clamped.right;
+    anchorBottom = clamped.bottom;
     applyCapsuleBounds();
     schedulePersistConfig();
   });
@@ -440,7 +536,22 @@ function registerIpc(): void {
   ipcMain.on("nightowl:quit", () => app.quit());
 }
 
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  app.quit();
+}
+
+app.on("second-instance", () => {
+  if (capsuleWindow && !capsuleWindow.isDestroyed()) {
+    if (!capsuleWindow.isVisible()) {
+      capsuleWindow.showInactive();
+    }
+    capsuleWindow.moveTop();
+  }
+});
+
 app.whenReady().then(async () => {
+  if (!gotSingleInstanceLock) return;
   const userDataDir = app.getPath("userData");
   settingsFilePath = path.join(userDataDir, "settings.json");
   journal = new SessionJournal(path.join(userDataDir, "session.json"));
@@ -501,15 +612,25 @@ app.whenReady().then(async () => {
   pollTimer = setInterval(() => void pollLoop(), 1500);
 });
 
-app.on("before-quit", () => {
+let isQuitting = false;
+
+app.on("before-quit", (event) => {
+  if (isQuitting) return;
+  event.preventDefault();
+  isQuitting = true;
   globalShortcut.unregisterAll();
   if (pollTimer) clearInterval(pollTimer);
   if (persistTimer) {
     clearTimeout(persistTimer);
-    void savePersistedConfigNow();
+    persistTimer = null;
   }
-  void journal?.clear(true);
-  void nativeBridge.stop();
+  void Promise.allSettled([
+    savePersistedConfigNow(),
+    journal?.clear(true),
+    nativeBridge.stop(),
+  ]).finally(() => {
+    app.quit();
+  });
 });
 
 app.on("window-all-closed", () => {

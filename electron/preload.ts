@@ -9,6 +9,7 @@ export interface NightowlApi {
   updateSettings: (patch: Partial<NightowlSettings>) => Promise<NightowlSettings>;
   focusSession: (hwnd: string) => Promise<{ focused: boolean; reason?: string }>;
   resizeCapsule: (width: number, height: number) => void;
+  setIgnoreMouse: (ignore: boolean) => void;
   moveCapsuleBy: (dx: number, dy: number) => void;
   resetCapsulePosition: () => void;
   openDiagnostics: () => void;
@@ -26,6 +27,7 @@ const api: NightowlApi = {
   updateSettings: (patch) => ipcRenderer.invoke("nightowl:updateSettings", patch),
   focusSession: (hwnd) => ipcRenderer.invoke("nightowl:focusSession", hwnd),
   resizeCapsule: (width, height) => ipcRenderer.send("nightowl:resizeCapsule", { width, height }),
+  setIgnoreMouse: (ignore) => ipcRenderer.send("nightowl:setIgnoreMouse", ignore),
   moveCapsuleBy: (dx, dy) => ipcRenderer.send("nightowl:moveCapsuleBy", { dx, dy }),
   resetCapsulePosition: () => ipcRenderer.send("nightowl:resetCapsulePosition"),
   openDiagnostics: () => ipcRenderer.send("nightowl:openDiagnostics"),

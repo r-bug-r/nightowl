@@ -61,6 +61,7 @@ internal static class Program
                 "getPowerStatus" => Win32.GetPowerStatus(),
                 "snapshot" => Win32.TakeSnapshot(),
                 "focusWindow" => HandleFocusWindow(root),
+                "stripWindowChrome" => HandleStripWindowChrome(root),
                 "ping" => new { ok = true, pid = Environment.ProcessId },
                 _ => throw new InvalidOperationException($"Unknown command: {cmd}")
             };
@@ -95,6 +96,22 @@ internal static class Program
         var hwnd = new IntPtr(hwndLong);
         var (focused, reason) = Win32.FocusWindow(hwnd);
         return new { focused, reason };
+    }
+
+    private static object HandleStripWindowChrome(JsonElement root)
+    {
+        if (!root.TryGetProperty("hwnd", out var hwndProp))
+        {
+            return new { stripped = false, reason = "missing hwnd" };
+        }
+
+        long hwndLong = hwndProp.ValueKind == JsonValueKind.String
+            ? long.Parse(hwndProp.GetString()!)
+            : hwndProp.GetInt64();
+
+        var hwnd = new IntPtr(hwndLong);
+        var ok = Win32.StripWindowChrome(hwnd);
+        return new { stripped = ok };
     }
 
     private static void WriteResponse(object payload)
@@ -269,6 +286,22 @@ internal static class Win32
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool AllowSetForegroundWindow(uint dwProcessId);
+
+    [DllImport("user32.dll")]
+    private static extern void SwitchToThisWindow(IntPtr hWnd, [MarshalAs(UnmanagedType.Bool)] bool fAltTab);
+
+    [DllImport("user32.dll")]
+    private static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
+
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW", SetLastError = true)]
+    private static extern IntPtr GetWindowLongPtr(IntPtr hWnd, int nIndex);
+
+    [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW", SetLastError = true)]
+    private static extern IntPtr SetWindowLongPtr(IntPtr hWnd, int nIndex, IntPtr dwNewLong);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
 
     [DllImport("kernel32.dll")]
     private static extern uint GetCurrentThreadId();
@@ -523,6 +556,41 @@ internal static class Win32
         return windows;
     }
 
+    public static bool StripWindowChrome(IntPtr hwnd)
+    {
+        if (!IsWindow(hwnd)) return false;
+        const int GWL_STYLE = -16;
+        const long WS_CAPTION = 0x00C00000L;
+        const long WS_THICKFRAME = 0x00040000L;
+        const long WS_BORDER = 0x00800000L;
+        const long WS_DLGFRAME = 0x00400000L;
+        const long WS_MINIMIZEBOX = 0x00020000L;
+        const long WS_MAXIMIZEBOX = 0x00010000L;
+        const long WS_SYSMENU = 0x00080000L;
+        const uint SWP_NOSIZE = 0x0001;
+        const uint SWP_NOMOVE = 0x0002;
+        const uint SWP_NOZORDER = 0x0004;
+        const uint SWP_NOACTIVATE = 0x0010;
+        const uint SWP_FRAMECHANGED = 0x0020;
+
+        long style = GetWindowLongPtr(hwnd, GWL_STYLE).ToInt64();
+        long mask = WS_CAPTION | WS_THICKFRAME | WS_BORDER | WS_DLGFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_SYSMENU;
+        long nextStyle = style & ~mask;
+        if (nextStyle != style)
+        {
+            SetWindowLongPtr(hwnd, GWL_STYLE, new IntPtr(nextStyle));
+        }
+        return SetWindowPos(
+            hwnd,
+            IntPtr.Zero,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED
+        );
+    }
+
     public static (bool Focused, string? Reason) FocusWindow(IntPtr hwnd)
     {
         if (!IsWindow(hwnd))
@@ -558,6 +626,17 @@ internal static class Win32
 
             BringWindowToTop(hwnd);
             bool ok = SetForegroundWindow(hwnd);
+            if (!ok || GetForegroundWindow() != hwnd)
+            {
+                const byte VK_MENU = 0x12;
+                const uint KEYEVENTF_EXTENDEDKEY = 0x0001;
+                const uint KEYEVENTF_KEYUP = 0x0002;
+                keybd_event(VK_MENU, 0x45, KEYEVENTF_EXTENDEDKEY, UIntPtr.Zero);
+                keybd_event(VK_MENU, 0x45, KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP, UIntPtr.Zero);
+                SwitchToThisWindow(hwnd, true);
+                BringWindowToTop(hwnd);
+                ok = SetForegroundWindow(hwnd) || GetForegroundWindow() == hwnd;
+            }
             return ok ? (true, null) : (false, "SetForegroundWindow returned false");
         }
         finally
