@@ -39,12 +39,21 @@ export interface AwakeState {
 
 export type ThemePreset = "forest" | "minimal-dark" | "minimal-light";
 
+export type CapsuleSection = "agents" | "owl" | "time";
+
+export type HoverAnimationSpeed = "slow" | "normal" | "fast";
+
 export interface NightowlSettings {
   batteryThreshold: number;
   batterySafeStop: boolean;
   keepDisplay: boolean;
   autoAwakeForAgents: boolean;
   theme: ThemePreset;
+  capsuleScale?: number;
+  capsuleOrder?: CapsuleSection[];
+  hoverAnimation?: HoverAnimationSpeed;
+  clockFormat24h?: boolean;
+  showClock?: boolean;
 }
 
 export interface NightowlApi {
@@ -55,6 +64,7 @@ export interface NightowlApi {
   updateSettings: (patch: Partial<NightowlSettings>) => Promise<NightowlSettings>;
   focusSession: (hwnd: string) => Promise<{ focused: boolean; reason?: string }>;
   resizeCapsule: (width: number, height: number) => void;
+  setIgnoreMouse: (ignore: boolean) => void;
   moveCapsuleBy: (dx: number, dy: number) => void;
   resetCapsulePosition: () => void;
   openDiagnostics: () => void;

@@ -19,6 +19,9 @@ export interface SessionScannerOptions {
 
 const DEFAULT_THINKING_WINDOW_MS = 6500;
 const INFLIGHT_MAX_AGE_MS = 120_000;
+const MAX_RECENT_SESSION_AGE_MS = 2 * 60 * 60 * 1000; // 2 hours
+const ONE_OFF_GRACE_MS = 10 * 60 * 1000; // 10 minutes
+const ANTIGRAVITY_MIN_CONTINUABLE_BYTES = 1_050_000; // ~1 MB
 
 interface ClaudeSessionFile {
   pid?: number;
@@ -376,6 +379,7 @@ export class SessionScanner {
 
     return [...claudeSessions, ...codexSessions, ...agySessions].sort((a, b) => {
       if (a.state !== b.state) return a.state === "thinking" ? -1 : 1;
+      if (a.updatedAt !== b.updatedAt) return b.updatedAt - a.updatedAt;
       if (a.harness !== b.harness) return a.harness.localeCompare(b.harness);
       return a.pid - b.pid;
     });
@@ -432,6 +436,10 @@ export class SessionScanner {
                 if (inspected.preview) {
                   preview = inspected.preview;
                 }
+              }
+
+              if (state !== "thinking" && now - updatedAt > MAX_RECENT_SESSION_AGE_MS) {
+                return;
               }
 
               sessions.push({
@@ -579,34 +587,214 @@ export class SessionScanner {
     const seenHwnds = new Set<string>();
     const seenPids = new Set<number>();
 
-    const agyConvDir = path.join(this.homeDir, ".gemini", "antigravity", "conversations");
-    const recentConvs = await findRecentFiles(agyConvDir, ".pb", 1);
-    const agyThinking =
-      recentConvs.length > 0 && now - recentConvs[0].mtimeMs <= this.thinkingWindowMs;
-    const agyUpdatedAt = recentConvs[0]?.mtimeMs ?? now;
+    const agyBaseDir = path.join(this.homeDir, ".gemini", "antigravity");
+    const agyConvDir = path.join(agyBaseDir, "conversations");
+    const agyAnnDir = path.join(agyBaseDir, "annotations");
+    const agyPresenceDir = path.join(agyBaseDir, "presence");
 
-    // 1. Antigravity 2.0 Desktop App windows
+    // Collect open Antigravity desktop windows & main PID
+    const agyWindows: NativeWindowInfo[] = [];
     for (const win of snapshot.windows) {
       if (win.pid === this.selfPid) continue;
       const exe = normalizeName(win.processName);
-      if (exe !== "antigravity.exe" && exe !== "agy.exe") continue;
-
-      seenHwnds.add(win.hwnd);
-      seenPids.add(win.pid);
-      sessions.push({
-        id: `antigravity:win:${win.hwnd}`,
-        harness: "antigravity",
-        label: win.title || "Antigravity",
-        projectName: win.title || "Antigravity",
-        state: agyThinking ? "thinking" : "idle",
-        hwnd: win.hwnd,
-        pid: win.pid,
-        windowTitle: win.title,
-        preview: win.title ? clipPreview(win.title) : null,
-        source: "desktop",
-        updatedAt: agyUpdatedAt,
-      });
+      if (exe === "antigravity.exe" || exe === "agy.exe") {
+        agyWindows.push(win);
+      }
     }
+    let primaryAgyPid = agyWindows[0]?.pid ?? 0;
+    if (!primaryAgyPid) {
+      for (const proc of snapshot.processes) {
+        if (proc.pid === this.selfPid || isElectronHelperProcess(proc)) continue;
+        const exe = normalizeName(proc.name);
+        if (exe === "antigravity.exe" || exe === "agy.exe") {
+          primaryAgyPid = proc.pid;
+          break;
+        }
+      }
+    }
+
+    // 1. Scan Antigravity conversations on disk (.db, .db-wal, .pb) + annotations + presence
+    interface ConvMeta {
+      id: string;
+      lastActivityMs: number;
+      sizeBytes: number;
+    }
+    const convMap = new Map<string, ConvMeta>();
+    let latestConvMtime = 0;
+
+    try {
+      const entries = await fs.readdir(agyConvDir, { withFileTypes: true });
+      await Promise.all(
+        entries.map(async (entry) => {
+          if (!entry.isFile()) return;
+          const lower = entry.name.toLowerCase();
+          let convId: string | null = null;
+          let isWal = false;
+          if (lower.endsWith(".db-wal")) {
+            convId = entry.name.slice(0, -7);
+            isWal = true;
+          } else if (lower.endsWith(".db") || lower.endsWith(".pb")) {
+            convId = entry.name.slice(0, -3);
+          }
+          if (!convId) return;
+
+          try {
+            const st = await fs.stat(path.join(agyConvDir, entry.name));
+            if (st.mtimeMs > latestConvMtime) latestConvMtime = st.mtimeMs;
+            const prev = convMap.get(convId);
+            if (!prev) {
+              convMap.set(convId, {
+                id: convId,
+                lastActivityMs: st.mtimeMs,
+                sizeBytes: isWal ? 0 : st.size,
+              });
+            } else {
+              prev.lastActivityMs = Math.max(prev.lastActivityMs, st.mtimeMs);
+              if (!isWal) {
+                prev.sizeBytes = Math.max(prev.sizeBytes, st.size);
+              }
+            }
+          } catch {
+            // ignore vanished file
+          }
+        })
+      );
+    } catch {
+      // ~/.gemini/antigravity/conversations may not exist
+    }
+
+    const titledConvSessions: AgentSession[] = [];
+    await Promise.all(
+      Array.from(convMap.values()).map(async (conv) => {
+        if (now - conv.lastActivityMs > MAX_RECENT_SESSION_AGE_MS) return;
+
+        let annRaw: string;
+        try {
+          annRaw = await fs.readFile(path.join(agyAnnDir, `${conv.id}.pbtxt`), "utf8");
+        } catch {
+          // No annotation => subagent/internal or ephemeral conversation
+          return;
+        }
+
+        const titleMatch = annRaw.match(/title:"((?:[^"\\]|\\.)*)"/);
+        const title = titleMatch?.[1]?.replace(/\\"/g, '"').replace(/\\\\/g, "\\").trim() ?? "";
+        if (!title) return;
+
+        const viewSecMatch = annRaw.match(/last_user_view_time:\{[^}]*seconds:(\d+)/);
+        const lastViewMs = viewSecMatch ? Number(viewSecMatch[1]) * 1000 : 0;
+        const effectiveUpdatedAt = Math.max(conv.lastActivityMs, lastViewMs);
+
+        if (now - effectiveUpdatedAt > MAX_RECENT_SESSION_AGE_MS) return;
+
+        const isThinking = now - conv.lastActivityMs <= this.thinkingWindowMs;
+
+        let hasLock = false;
+        try {
+          await fs.access(path.join(agyPresenceDir, `${conv.id}.lock`));
+          hasLock = true;
+        } catch {
+          hasLock = false;
+        }
+
+        // Only show user-opened/locked or actively thinking conversations
+        if (!hasLock && !isThinking) return;
+
+        // Filter out likely one-off conversations (small DB, not recently active, not thinking)
+        if (
+          !isThinking &&
+          now - effectiveUpdatedAt > ONE_OFF_GRACE_MS &&
+          conv.sizeBytes < ANTIGRAVITY_MIN_CONTINUABLE_BYTES
+        ) {
+          return;
+        }
+
+        // Match best Antigravity window if multiple are open
+        const titleTokens = title
+          .toLowerCase()
+          .split(/\s+/)
+          .filter((t) => t.length >= 4);
+        let matchedWin = agyWindows.find((w) => {
+          const wt = w.title.toLowerCase();
+          return titleTokens.some((tok) => wt.includes(tok));
+        });
+        if (!matchedWin && agyWindows.length > 1) {
+          try {
+            const transcriptPath = path.join(
+              agyBaseDir,
+              "brain",
+              conv.id,
+              ".system_generated",
+              "logs",
+              "transcript.jsonl"
+            );
+            const fh = await fs.open(transcriptPath, "r");
+            try {
+              const buf = Buffer.alloc(8192);
+              const { bytesRead } = await fh.read(buf, 0, 8192, 0);
+              const headLower = buf.subarray(0, bytesRead).toString("utf8").toLowerCase();
+              matchedWin = agyWindows.find((w) => {
+                const wsName = w.title.replace(/\s*[-–—]\s*antigravity.*$/i, "").trim().toLowerCase();
+                return wsName.length >= 2 && headLower.includes(wsName);
+              });
+            } finally {
+              await fh.close();
+            }
+          } catch {
+            // ignore missing transcript
+          }
+        }
+        matchedWin ??= agyWindows[0];
+
+        titledConvSessions.push({
+          id: `antigravity:conv:${conv.id}`,
+          harness: "antigravity",
+          label: title,
+          projectName: title,
+          state: isThinking ? "thinking" : "idle",
+          hwnd: matchedWin?.hwnd ?? null,
+          pid: matchedWin?.pid ?? primaryAgyPid,
+          windowTitle: matchedWin?.title ?? title,
+          preview: title,
+          source: "desktop",
+          updatedAt: effectiveUpdatedAt,
+        });
+      })
+    );
+
+    if (titledConvSessions.length > 0) {
+      sessions.push(...titledConvSessions);
+      for (const w of agyWindows) {
+        seenHwnds.add(w.hwnd);
+        seenPids.add(w.pid);
+      }
+    } else {
+      // Fallback: Antigravity Desktop App windows when no titled annotations exist
+      const agyThinking =
+        latestConvMtime > 0 && now - latestConvMtime <= this.thinkingWindowMs;
+      const agyUpdatedAt = latestConvMtime > 0 ? latestConvMtime : now;
+
+      for (const win of agyWindows) {
+        seenHwnds.add(win.hwnd);
+        seenPids.add(win.pid);
+        sessions.push({
+          id: `antigravity:win:${win.hwnd}`,
+          harness: "antigravity",
+          label: win.title || "Antigravity",
+          projectName: win.title || "Antigravity",
+          state: agyThinking ? "thinking" : "idle",
+          hwnd: win.hwnd,
+          pid: win.pid,
+          windowTitle: win.title,
+          preview: win.title ? clipPreview(win.title) : null,
+          source: "desktop",
+          updatedAt: agyUpdatedAt,
+        });
+      }
+    }
+
+    const agyThinkingFallback =
+      latestConvMtime > 0 && now - latestConvMtime <= this.thinkingWindowMs;
+    const agyUpdatedAtFallback = latestConvMtime > 0 ? latestConvMtime : now;
 
     // 2. Antigravity CLI (`agy` / `antigravity`)
     for (const proc of snapshot.processes) {
@@ -640,13 +828,13 @@ export class SessionScanner {
         harness: "antigravity",
         label: win?.title || "Antigravity",
         projectName: win?.title || "Antigravity",
-        state: agyThinking ? "thinking" : "idle",
+        state: agyThinkingFallback ? "thinking" : "idle",
         hwnd: win?.hwnd ?? null,
         pid: proc.pid,
         windowTitle: win?.title ?? null,
         preview: win?.title ? clipPreview(win.title) : null,
         source: "cli",
-        updatedAt: agyUpdatedAt,
+        updatedAt: agyUpdatedAtFallback,
       });
     }
 

@@ -5,8 +5,10 @@ directories:
 files:
   - dist/**/*
   - dist-electron/**/*
-  - native/bin/**/*
   - package.json
+extraResources:
+  - from: native/bin
+    to: native
 win:
   target:
     - target: nsis

@@ -2,7 +2,7 @@ import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "re
 import { DiagnosticsModal } from "./components/DiagnosticsModal";
 import { HarnessIcon, harnessDisplayName } from "./components/HarnessIcons";
 import { OwlIcon } from "./components/OwlIcon";
-import type { AgentSession, AwakeState, NightowlSettings, ThemePreset } from "./types";
+import type { AgentSession, AwakeState, CapsuleSection, NightowlSettings, ThemePreset } from "./types";
 
 const HOLD_TO_END_MS = 600;
 const MAX_VISIBLE_SESSIONS = 5;
@@ -32,10 +32,14 @@ const DEFAULT_SETTINGS: NightowlSettings = {
   keepDisplay: false,
   autoAwakeForAgents: false,
   theme: "forest",
+  capsuleOrder: ["agents", "owl", "time"],
+  hoverAnimation: "slow",
+  clockFormat24h: false,
+  showClock: true,
 };
 
-function formatClock(date: Date): string {
-  return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+function formatClock(date: Date, use24h = false): string {
+  return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit", hour12: !use24h });
 }
 
 function formatCountdown(ms: number): string {
@@ -76,7 +80,7 @@ export const App: React.FC = () => {
   const [hoveredSession, setHoveredSession] = useState<AgentSession | null>(null);
   const [hoveredOverflow, setHoveredOverflow] = useState(false);
   const [hoveredControl, setHoveredControl] = useState<
-    "owl" | "timer" | "awake" | "countdown" | "screen" | "stop" | null
+    "owl" | "timer" | "countdown" | "screen" | "stop" | null
   >(null);
   const [timerOpen, setTimerOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -97,25 +101,53 @@ export const App: React.FC = () => {
   const holdRafRef = useRef<number | null>(null);
   const holdStartRef = useRef<number>(0);
 
-  // Dragging capsule
-  const dragRef = useRef<{ active: boolean; moved: boolean; lastX: number; lastY: number }>({
+  // Dragging & resizing capsule
+  const [liveScale, setLiveScale] = useState<number | null>(null);
+  const capsuleScale = liveScale ?? settings.capsuleScale ?? 1;
+  const dragRef = useRef<{
+    active: boolean;
+    moved: boolean;
+    startX: number;
+    startY: number;
+    lastX: number;
+    lastY: number;
+  }>({
     active: false,
     moved: false,
+    startX: 0,
+    startY: 0,
     lastX: 0,
     lastY: 0,
   });
+  const suppressNextClickRef = useRef(false);
+  const resizeGripRef = useRef<{
+    active: boolean;
+    startX: number;
+    startScale: number;
+    lastScale: number;
+  }>({
+    active: false,
+    startX: 0,
+    startScale: 1,
+    lastScale: 1,
+  });
+  const stageLeaveGraceRef = useRef<number | null>(null);
+  const lastSentSizeRef = useRef<{ w: number; h: number }>({ w: 0, h: 0 });
+  const resizeRafRef = useRef<number | null>(null);
 
   const stageRef = useRef<HTMLDivElement | null>(null);
   const hoursInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
-    const t = setInterval(() => {
+    const updateClock = () => {
       const now = new Date();
-      setClock(formatClock(now));
+      setClock(formatClock(now, Boolean(settings.clockFormat24h)));
       setNowMs(now.getTime());
-    }, 1000);
+    };
+    updateClock();
+    const t = setInterval(updateClock, 1000);
     return () => clearInterval(t);
-  }, []);
+  }, [settings.clockFormat24h]);
 
   useEffect(() => {
     let unsub: (() => void) | undefined;
@@ -152,6 +184,10 @@ export const App: React.FC = () => {
       setHoveredSession(null);
       setHoveredOverflow(false);
       setHoveredControl(null);
+      dragRef.current.active = false;
+      dragRef.current.moved = false;
+      resizeGripRef.current.active = false;
+      setLiveScale(null);
     };
     const onPointerDown = (e: PointerEvent) => {
       const stage = stageRef.current;
@@ -167,25 +203,49 @@ export const App: React.FC = () => {
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("blur", onBlur);
       document.removeEventListener("pointerdown", onPointerDown);
+      if (hoverGraceRef.current !== null) {
+        window.clearTimeout(hoverGraceRef.current);
+        hoverGraceRef.current = null;
+      }
+      if (stageLeaveGraceRef.current !== null) {
+        window.clearTimeout(stageLeaveGraceRef.current);
+        stageLeaveGraceRef.current = null;
+      }
     };
   }, [isDiagnostics]);
 
-  // Keep transparent window bounds matched to capsule + open popovers
+  // Fixed-size transparent window: never resize at runtime (resizing caused flicker + upward jumps).
+  // Instead, toggle click-through so only visible UI captures the mouse.
+  const ignoreMouseRef = useRef(true);
   useEffect(() => {
     if (isDiagnostics) return;
-    const el = stageRef.current;
-    if (!el) return;
-
-    const sendSize = () => {
-      const rect = el.getBoundingClientRect();
-      window.nightowl?.resizeCapsule(Math.ceil(rect.width) + 8, Math.ceil(rect.height) + 8);
+    const setIgnore = (ignore: boolean) => {
+      if (ignoreMouseRef.current === ignore) return;
+      ignoreMouseRef.current = ignore;
+      window.nightowl?.setIgnoreMouse(ignore);
     };
-
-    sendSize();
-    const ro = new ResizeObserver(sendSize);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [isDiagnostics, hovered, timerOpen, menuOpen, sessions.length, awake.active, hoveredSession]);
+    const onMove = (e: MouseEvent) => {
+      if (dragRef.current.active || resizeGripRef.current.active) {
+        setIgnore(false);
+        return;
+      }
+      const target = e.target as HTMLElement | null;
+      const overUi = Boolean(
+        target?.closest(".capsule, .agent-preview-card, .capsule-hover-popover, .capsule-hover-hint, .tray-menu")
+      );
+      setIgnore(!overUi);
+    };
+    const onLeave = () => {
+      if (!dragRef.current.active && !resizeGripRef.current.active) setIgnore(true);
+    };
+    window.nightowl?.setIgnoreMouse(true);
+    document.addEventListener("mousemove", onMove);
+    document.documentElement.addEventListener("mouseleave", onLeave);
+    return () => {
+      document.removeEventListener("mousemove", onMove);
+      document.documentElement.removeEventListener("mouseleave", onLeave);
+    };
+  }, [isDiagnostics]);
 
   const liveRemainingMs = awake.endsAt ? Math.max(0, awake.endsAt - nowMs) : 0;
 
@@ -266,32 +326,100 @@ export const App: React.FC = () => {
     await window.nightowl?.focusSession(session.hwnd);
   };
 
-  const handleChevronPointerDown = (e: React.PointerEvent) => {
+  const handleCapsulePointerDown = (e: React.PointerEvent) => {
     if (e.button !== 0) return;
-    dragRef.current = { active: true, moved: false, lastX: e.screenX, lastY: e.screenY };
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    const target = e.target as HTMLElement;
+    if (target.closest("input, textarea, .capsule-resize-grip")) return;
+    dragRef.current = {
+      active: true,
+      moved: false,
+      startX: e.screenX,
+      startY: e.screenY,
+      lastX: e.screenX,
+      lastY: e.screenY,
+    };
   };
 
-  const handleChevronPointerMove = (e: React.PointerEvent) => {
+  const handleCapsulePointerMove = (e: React.PointerEvent) => {
     if (!dragRef.current.active) return;
+    const totalDx = e.screenX - dragRef.current.startX;
+    const totalDy = e.screenY - dragRef.current.startY;
+    if (!dragRef.current.moved && Math.hypot(totalDx, totalDy) < 4) return;
+    if (!dragRef.current.moved) {
+      dragRef.current.moved = true;
+      suppressNextClickRef.current = true;
+      try {
+        (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+      } catch {
+        // ignore
+      }
+    }
     const dx = e.screenX - dragRef.current.lastX;
     const dy = e.screenY - dragRef.current.lastY;
-    if (Math.abs(dx) >= 2 || Math.abs(dy) >= 2) {
-      dragRef.current.moved = true;
+    if (dx !== 0 || dy !== 0) {
       dragRef.current.lastX = e.screenX;
       dragRef.current.lastY = e.screenY;
       window.nightowl?.moveCapsuleBy(dx, dy);
     }
   };
 
-  const handleChevronPointerUp = (e: React.PointerEvent) => {
+  const handleCapsulePointerUp = (e: React.PointerEvent) => {
     if (!dragRef.current.active) return;
     dragRef.current.active = false;
+    if (dragRef.current.moved) {
+      try {
+        (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+      } catch {
+        // ignore
+      }
+      window.setTimeout(() => {
+        suppressNextClickRef.current = false;
+      }, 0);
+    }
+    dragRef.current.moved = false;
+  };
+
+  const handleResizePointerDown = (e: React.PointerEvent) => {
+    if (e.button !== 0) return;
+    e.stopPropagation();
+    const cur = settings.capsuleScale ?? 1;
+    resizeGripRef.current = {
+      active: true,
+      startX: e.screenX,
+      startScale: cur,
+      lastScale: cur,
+    };
+    try {
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    } catch {
+      // ignore
+    }
+  };
+
+  const handleResizePointerMove = (e: React.PointerEvent) => {
+    if (!resizeGripRef.current.active) return;
+    const dx = resizeGripRef.current.startX - e.screenX; // drag left = bigger, drag right = smaller
+    const nextScale = Math.max(
+      0.75,
+      Math.min(1.6, Math.round((resizeGripRef.current.startScale + dx / 180) * 100) / 100)
+    );
+    resizeGripRef.current.lastScale = nextScale;
+    setLiveScale(nextScale);
+  };
+
+  const handleResizePointerUp = (e: React.PointerEvent) => {
+    if (!resizeGripRef.current.active) return;
+    resizeGripRef.current.active = false;
+    const finalScale = resizeGripRef.current.lastScale;
+    setLiveScale(null);
     try {
       (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
     } catch {
       // ignore
     }
+    void window.nightowl?.updateSettings({ capsuleScale: finalScale }).then((next) => {
+      if (next) setSettings(next);
+    });
   };
 
   if (isDiagnostics) {
@@ -300,8 +428,8 @@ export const App: React.FC = () => {
         awake={awake}
         sessions={sessions}
         settings={settings}
-        onToggleSetting={async (key, val) => {
-          const next = await window.nightowl?.updateSettings({ [key]: val });
+        onUpdateSettings={async (patch) => {
+          const next = await window.nightowl?.updateSettings(patch);
           if (next) setSettings(next);
         }}
         onSelectTheme={async (theme) => {
@@ -319,6 +447,9 @@ export const App: React.FC = () => {
         onFocusSession={(hwnd) => {
           void window.nightowl?.focusSession(hwnd);
         }}
+        onResetPosition={() => {
+          window.nightowl?.resetCapsulePosition();
+        }}
       />
     );
   }
@@ -330,21 +461,18 @@ export const App: React.FC = () => {
     }
   };
 
-  const scheduleClearTimerHover = () => {
+  const scheduleClearHoverTargets = (delayMs = 90) => {
     cancelHoverGrace();
     hoverGraceRef.current = window.setTimeout(() => {
       hoverGraceRef.current = null;
-      setHoveredControl((prev) => (prev === "timer" ? null : prev));
-    }, 150);
+      setHoveredControl(null);
+      setHoveredSession(null);
+      setHoveredOverflow(false);
+    }, delayMs);
   };
 
-  const scheduleClearOverflow = () => {
-    cancelHoverGrace();
-    hoverGraceRef.current = window.setTimeout(() => {
-      hoverGraceRef.current = null;
-      setHoveredOverflow(false);
-    }, 150);
-  };
+  const scheduleClearTimerHover = () => scheduleClearHoverTargets(140);
+  const scheduleClearOverflow = () => scheduleClearHoverTargets(140);
 
   const updateAnchorFromTarget = (el: HTMLElement | null) => {
     hoveredElRef.current = el;
@@ -378,17 +506,16 @@ export const App: React.FC = () => {
       const floatingWidth = floating.offsetWidth;
       const anchorFromSlotRight = slotRect.right - (targetRect.left + targetRect.width / 2);
       const maxRight = Math.max(0, slotRect.width - floatingWidth);
-      const clampedRight = Math.max(
+      const nextRight = Math.max(
         0,
         Math.min(maxRight, Math.round(anchorFromSlotRight - floatingWidth / 2))
       );
-      setFloatingRight(clampedRight);
-      setCaretOffset(
-        Math.max(
-          14,
-          Math.min(floatingWidth - 14, Math.round(floatingWidth - (anchorFromSlotRight - clampedRight)))
-        )
+      const nextCaret = Math.max(
+        14,
+        Math.min(floatingWidth - 14, Math.round(floatingWidth - (anchorFromSlotRight - nextRight)))
       );
+      setFloatingRight((prev) => (prev === nextRight ? prev : nextRight));
+      setCaretOffset((prev) => (prev === nextCaret ? prev : nextCaret));
     };
 
     measure();
@@ -402,21 +529,35 @@ export const App: React.FC = () => {
       ? ({ marginRight: `${floatingRight}px`, "--caret-x": `${caretOffset}px` } as React.CSSProperties)
       : undefined;
 
+  const cancelStageLeaveGrace = () => {
+    if (stageLeaveGraceRef.current !== null) {
+      window.clearTimeout(stageLeaveGraceRef.current);
+      stageLeaveGraceRef.current = null;
+    }
+  };
+
   return (
     <div
       className="tray-stage"
       data-theme={settings.theme || "forest"}
+      data-anim={settings.hoverAnimation || "slow"}
+      style={{ "--capsule-scale": capsuleScale } as React.CSSProperties}
       ref={stageRef}
       onMouseEnter={() => {
         cancelHoverGrace();
+        cancelStageLeaveGrace();
         setHovered(true);
       }}
       onMouseLeave={() => {
         cancelHoverGrace();
-        setHovered(false);
-        setHoveredSession(null);
-        setHoveredOverflow(false);
-        setHoveredControl(null);
+        cancelStageLeaveGrace();
+        stageLeaveGraceRef.current = window.setTimeout(() => {
+          stageLeaveGraceRef.current = null;
+          setHovered(false);
+          setHoveredSession(null);
+          setHoveredOverflow(false);
+          setHoveredControl(null);
+        }, 120);
       }}
     >
       {/* OMP Session HUD-style Floating Preview Card */}
@@ -590,7 +731,6 @@ export const App: React.FC = () => {
           >
             {hoveredControl === "owl" &&
               (awake.active ? "Click to allow sleep · Ctrl+Shift+O" : "Click to stay awake · Ctrl+Shift+O")}
-            {hoveredControl === "awake" && "Quick Awake · Stay awake until stopped"}
             {hoveredControl === "countdown" &&
               (awake.autoAwakeActive && !awake.endsAt
                 ? "Auto-awake · Agent is thinking"
@@ -671,6 +811,28 @@ export const App: React.FC = () => {
               </button>
             ))}
           </div>
+          <div className="tray-theme-row" role="group" aria-label="Capsule size">
+            {(
+              [
+                { label: "Small", scale: 0.88 },
+                { label: "Normal", scale: 1.0 },
+                { label: "Large", scale: 1.2 },
+              ] as Array<{ label: string; scale: number }>
+            ).map((sz) => (
+              <button
+                key={sz.label}
+                type="button"
+                className={`tray-theme-pill ${Math.abs(capsuleScale - sz.scale) < 0.06 ? "active" : ""}`}
+                onClick={() => {
+                  void window.nightowl?.updateSettings({ capsuleScale: sz.scale }).then((next) => {
+                    if (next) setSettings(next);
+                  });
+                }}
+              >
+                {sz.label}
+              </button>
+            ))}
+          </div>
           <div className="tray-menu-sep" />
           <button
             type="button"
@@ -708,227 +870,267 @@ export const App: React.FC = () => {
         className={`capsule ${awake.active ? "is-awake" : ""} ${
           awake.autoAwakeActive && !awake.endsAt ? "is-auto-awake" : ""
         } ${isCapsuleExpanded ? "is-expanded" : ""}`}
+        onPointerDown={handleCapsulePointerDown}
+        onPointerMove={handleCapsulePointerMove}
+        onPointerUp={handleCapsulePointerUp}
+        onPointerCancel={handleCapsulePointerUp}
+        onClickCapture={(e) => {
+          if (suppressNextClickRef.current) {
+            e.stopPropagation();
+            e.preventDefault();
+            suppressNextClickRef.current = false;
+          }
+        }}
         onContextMenu={(e) => {
           e.preventDefault();
           setTimerOpen(false);
           setMenuOpen((prev) => !prev);
         }}
       >
+        <div
+          className="capsule-resize-grip"
+          title="Drag horizontally to resize"
+          aria-hidden="true"
+          onPointerDown={handleResizePointerDown}
+          onPointerMove={handleResizePointerMove}
+          onPointerUp={handleResizePointerUp}
+          onPointerCancel={handleResizePointerUp}
+        />
         <div className="capsule-specular" aria-hidden="true" />
 
         {/* Overflow / Drag Chevron */}
         <button
           type="button"
           className="capsule-chevron"
-          title="Options (or drag to move)"
+          title="Options (or drag capsule to move)"
           aria-label="Nightowl options"
           onClick={() => {
-            if (dragRef.current.moved) {
-              dragRef.current.moved = false;
-              return;
-            }
             setTimerOpen(false);
             setMenuOpen((prev) => !prev);
           }}
-          onPointerDown={handleChevronPointerDown}
-          onPointerMove={handleChevronPointerMove}
-          onPointerUp={handleChevronPointerUp}
         >
           <svg viewBox="0 0 16 16" aria-hidden="true">
             <path d="M4 10l4-4 4 4" />
           </svg>
         </button>
 
-        {/* Expandable Agent Sessions Strip (on hover) */}
-        <div className={`agent-strip ${showAgentsStrip ? "open" : ""}`}>
-          {visibleSessions.map((session) => (
-            <button
-              key={session.id}
-              type="button"
-              className={`agent-btn agent-${session.harness} ${session.state === "thinking" ? "is-thinking" : ""} ${session.hwnd ? "" : "no-hwnd"}`}
-              onClick={() => void handleFocusAgent(session)}
-              onMouseEnter={(e) => {
-                updateAnchorFromTarget(e.currentTarget);
-                setHoveredControl(null);
-                setHoveredOverflow(false);
-                setHoveredSession(session);
-              }}
-              onMouseLeave={() => setHoveredSession((cur) => (cur?.id === session.id ? null : cur))}
-              aria-label={`${harnessDisplayName(session.harness)}: ${session.projectName}`}
-            >
-              <HarnessIcon harness={session.harness} state={session.state} size={17} />
-            </button>
-          ))}
-          {overflowSessions.length > 0 && (
-            <button
-              type="button"
-              className="agent-overflow-pill"
-              onMouseEnter={(e) => {
-                cancelHoverGrace();
-                updateAnchorFromTarget(e.currentTarget);
-                setHoveredControl(null);
-                setHoveredSession(null);
-                setHoveredOverflow(true);
-              }}
-              onMouseLeave={scheduleClearOverflow}
-              aria-label={`${overflowSessions.length} more active agent sessions`}
-            >
-              +{overflowSessions.length}
-            </button>
-          )}
-        </div>
+        {(settings.capsuleOrder && settings.capsuleOrder.length === 3
+          ? settings.capsuleOrder
+          : (["agents", "owl", "time"] as CapsuleSection[])
+        ).map((section) => {
+          if (section === "agents") {
+            if (sessions.length === 0) return null;
+            return (
+              <div key="agents" className={`agent-strip ${showAgentsStrip ? "open" : ""}`}>
+                {visibleSessions.map((session) => (
+                  <button
+                    key={session.id}
+                    type="button"
+                    className={`agent-btn agent-${session.harness} ${session.state === "thinking" ? "is-thinking" : ""} ${session.hwnd ? "" : "no-hwnd"}`}
+                    onClick={() => void handleFocusAgent(session)}
+                    onMouseEnter={(e) => {
+                      cancelHoverGrace();
+                      updateAnchorFromTarget(e.currentTarget);
+                      setHoveredControl(null);
+                      setHoveredOverflow(false);
+                      setHoveredSession(session);
+                    }}
+                    onMouseLeave={() => scheduleClearHoverTargets()}
+                    aria-label={`${harnessDisplayName(session.harness)}: ${session.projectName}`}
+                  >
+                    <HarnessIcon harness={session.harness} state={session.state} size={12} />
+                  </button>
+                ))}
+                {overflowSessions.length > 0 && (
+                  <button
+                    type="button"
+                    className="agent-overflow-pill"
+                    onMouseEnter={(e) => {
+                      cancelHoverGrace();
+                      updateAnchorFromTarget(e.currentTarget);
+                      setHoveredControl(null);
+                      setHoveredSession(null);
+                      setHoveredOverflow(true);
+                    }}
+                    onMouseLeave={scheduleClearOverflow}
+                    aria-label={`${overflowSessions.length} more active agent sessions`}
+                  >
+                    +{overflowSessions.length}
+                  </button>
+                )}
+              </div>
+            );
+          }
 
-        {/* Golden Ring + Owl Mascot (1-click Quick Awake toggle) */}
-        <button
-          type="button"
-          className="owl-ring-btn"
-          onMouseEnter={(e) => {
-            updateAnchorFromTarget(e.currentTarget);
-            setHoveredSession(null);
-            setHoveredOverflow(false);
-            setHoveredControl("owl");
-          }}
-          onMouseLeave={() => setHoveredControl((prev) => (prev === "owl" ? null : prev))}
-          onClick={() => void handleToggleQuickAwake()}
-          aria-label={awake.active ? "Allow sleep" : "Keep PC awake"}
-        >
-          <OwlIcon awake={awake.active} size={25} theme={settings.theme} />
-        </button>
+          if (section === "owl") {
+            return (
+              <div key="owl" className="capsule-owl-group">
+                {!awake.active ? (
+                  <div className={`capsule-collapsible ${showAsleepActions ? "open" : ""}`}>
+                    <button
+                      type="button"
+                      className={`capsule-icon-action ${timerOpen ? "is-active" : ""}`}
+                      aria-label="Timer options"
+                      onMouseEnter={(e) => {
+                        cancelHoverGrace();
+                        updateAnchorFromTarget(e.currentTarget);
+                        setHoveredSession(null);
+                        setHoveredOverflow(false);
+                        setHoveredControl("timer");
+                      }}
+                      onMouseLeave={scheduleClearTimerHover}
+                      onClick={(e) => {
+                        cancelHoverGrace();
+                        updateAnchorFromTarget(e.currentTarget);
+                        handleToggleTimer();
+                      }}
+                    >
+                      <svg viewBox="0 0 16 16" aria-hidden="true">
+                        <circle cx="8" cy="8.5" r="5.5" fill="none" stroke="currentColor" strokeWidth="1.45" />
+                        <path
+                          d="M8 5.5v3l2 1.2M6.2 1.8h3.6"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="1.45"
+                          strokeLinecap="round"
+                        />
+                      </svg>
+                    </button>
+                  </div>
+                ) : (
+                  <div className={`capsule-collapsible ${showExpandedAwakeExtras ? "open" : ""}`}>
+                    <button
+                      type="button"
+                      className={`capsule-icon-btn ${settings.keepDisplay ? "is-on" : ""}`}
+                      aria-label={settings.keepDisplay ? "Screen stays lit" : "Screen turns off"}
+                      onMouseEnter={(e) => {
+                        cancelHoverGrace();
+                        updateAnchorFromTarget(e.currentTarget);
+                        setHoveredSession(null);
+                        setHoveredOverflow(false);
+                        setHoveredControl("screen");
+                      }}
+                      onMouseLeave={() => scheduleClearHoverTargets()}
+                      onClick={() => {
+                        void window.nightowl
+                          ?.updateSettings({ keepDisplay: !settings.keepDisplay })
+                          .then((next) => {
+                            if (next) setSettings(next);
+                          });
+                      }}
+                    >
+                      <svg viewBox="0 0 16 16" aria-hidden="true">
+                        <rect
+                          x="2"
+                          y="3"
+                          width="12"
+                          height="8.5"
+                          rx="1.5"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="1.35"
+                        />
+                        <path
+                          d="M5.5 13.5h5"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="1.35"
+                          strokeLinecap="round"
+                        />
+                        {settings.keepDisplay && <circle cx="8" cy="7.2" r="1.4" fill="currentColor" />}
+                      </svg>
+                    </button>
+                  </div>
+                )}
 
-        {/* Expanded Asleep Controls: Icon-only Timer + Quick Awake (hover for options) */}
-        {showAsleepActions && (
-          <div className="capsule-action-pair">
-            <button
-              type="button"
-              className={`capsule-icon-action ${timerOpen ? "is-active" : ""}`}
-              aria-label="Timer options"
-              onMouseEnter={(e) => {
-                cancelHoverGrace();
-                updateAnchorFromTarget(e.currentTarget);
-                setHoveredSession(null);
-                setHoveredControl("timer");
-              }}
-              onMouseLeave={scheduleClearTimerHover}
-              onClick={(e) => {
-                cancelHoverGrace();
-                updateAnchorFromTarget(e.currentTarget);
-                handleToggleTimer();
-              }}
-            >
-              <svg viewBox="0 0 16 16" aria-hidden="true">
-                <circle cx="8" cy="8.5" r="5.5" fill="none" stroke="currentColor" strokeWidth="1.45" />
-                <path
-                  d="M8 5.5v3l2 1.2M6.2 1.8h3.6"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.45"
-                  strokeLinecap="round"
-                />
-              </svg>
-            </button>
-            <button
-              type="button"
-              className="capsule-icon-action is-accent"
-              aria-label="Quick Awake"
-              onMouseEnter={(e) => {
-                updateAnchorFromTarget(e.currentTarget);
-                setHoveredSession(null);
-                setHoveredControl("awake");
-              }}
-              onMouseLeave={() => setHoveredControl((prev) => (prev === "awake" ? null : prev))}
-              onClick={() => {
-                setTimerOpen(false);
-                setHoveredControl(null);
-                void window.nightowl?.startAwake(null).then((next) => next && setAwake(next));
-              }}
-            >
-              <svg viewBox="0 0 16 16" aria-hidden="true">
-                <path
-                  d="M9.2 1.8L4.3 8.8h3.5l-1 5.4 4.9-7H8.2l1-5.4z"
-                  fill="currentColor"
-                />
-              </svg>
-            </button>
-          </div>
-        )}
+                <button
+                  type="button"
+                  className="owl-ring-btn"
+                  onMouseEnter={(e) => {
+                    cancelHoverGrace();
+                    updateAnchorFromTarget(e.currentTarget);
+                    setHoveredSession(null);
+                    setHoveredOverflow(false);
+                    setHoveredControl("owl");
+                  }}
+                  onMouseLeave={() => scheduleClearHoverTargets()}
+                  onClick={() => void handleToggleQuickAwake()}
+                  aria-label={awake.active ? "Allow sleep" : "Keep PC awake"}
+                >
+                  <OwlIcon awake={awake.active} size={18} theme={settings.theme} />
+                </button>
+              </div>
+            );
+          }
 
-        {/* Active Countdown + Minimal Screen Toggle + Hold-to-End Button */}
-        {awake.active && (
-          <div className="awake-controls">
-            <button
-              type="button"
-              className={`countdown-btn ${awake.autoAwakeActive && !awake.endsAt ? "is-auto" : ""}`}
-              aria-label="Remaining awake time, click to add 30 minutes"
-              onMouseEnter={(e) => {
-                updateAnchorFromTarget(e.currentTarget);
-                setHoveredSession(null);
-                setHoveredOverflow(false);
-                setHoveredControl("countdown");
-              }}
-              onMouseLeave={() => setHoveredControl((prev) => (prev === "countdown" ? null : prev))}
-              onClick={handleAddTime}
-            >
-              {awake.autoAwakeActive && !awake.endsAt ? (
-                <>
-                  <span className="auto-dot" aria-hidden="true" />
-                  <span>Auto</span>
-                </>
-              ) : (
-                <span>{awake.endsAt ? formatCountdown(liveRemainingMs) : "Awake"}</span>
+          // section === "time"
+          const showClock = settings.showClock !== false;
+          if (!awake.active && !showClock) return null;
+          return (
+            <div key="time" className="capsule-time-group">
+              {awake.active && (
+                <div className="awake-controls">
+                  <button
+                    type="button"
+                    className={`countdown-btn ${awake.autoAwakeActive && !awake.endsAt ? "is-auto" : ""}`}
+                    aria-label="Remaining awake time, click to add 30 minutes"
+                    onMouseEnter={(e) => {
+                      cancelHoverGrace();
+                      updateAnchorFromTarget(e.currentTarget);
+                      setHoveredSession(null);
+                      setHoveredOverflow(false);
+                      setHoveredControl("countdown");
+                    }}
+                    onMouseLeave={() => scheduleClearHoverTargets()}
+                    onClick={handleAddTime}
+                  >
+                    {awake.autoAwakeActive && !awake.endsAt ? (
+                      <>
+                        <span className="auto-dot" aria-hidden="true" />
+                        <span>Auto</span>
+                      </>
+                    ) : (
+                      <span>{awake.endsAt ? formatCountdown(liveRemainingMs) : "Awake"}</span>
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    className="hold-end-btn"
+                    style={
+                      {
+                        "--hold-deg": `${Math.round(holdProgress * 360)}deg`,
+                      } as React.CSSProperties
+                    }
+                    onMouseEnter={(e) => {
+                      cancelHoverGrace();
+                      updateAnchorFromTarget(e.currentTarget);
+                      setHoveredSession(null);
+                      setHoveredOverflow(false);
+                      setHoveredControl("stop");
+                    }}
+                    onMouseLeave={() => scheduleClearHoverTargets()}
+                    onPointerDown={startHoldToEnd}
+                    onPointerUp={cancelHold}
+                    onPointerLeave={cancelHold}
+                    onPointerCancel={cancelHold}
+                    aria-label="Hold to end awake session"
+                  >
+                    <svg viewBox="0 0 16 16" aria-hidden="true">
+                      <path d="M5 5l6 6M11 5l-6 6" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                    </svg>
+                  </button>
+                </div>
               )}
-            </button>
-            {showExpandedAwakeExtras && (
-              <button
-                type="button"
-                className={`capsule-icon-btn ${settings.keepDisplay ? "is-on" : ""}`}
-                aria-label={settings.keepDisplay ? "Screen stays lit" : "Screen turns off"}
-                onMouseEnter={(e) => {
-                  updateAnchorFromTarget(e.currentTarget);
-                  setHoveredSession(null);
-                  setHoveredControl("screen");
-                }}
-                onMouseLeave={() => setHoveredControl((prev) => (prev === "screen" ? null : prev))}
-                onClick={() => {
-                  void window.nightowl?.updateSettings({ keepDisplay: !settings.keepDisplay }).then((next) => {
-                    if (next) setSettings(next);
-                  });
-                }}
-              >
-                <svg viewBox="0 0 16 16" aria-hidden="true">
-                  <rect x="2" y="3" width="12" height="8.5" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.35" />
-                  <path d="M5.5 13.5h5" fill="none" stroke="currentColor" strokeWidth="1.35" strokeLinecap="round" />
-                  {settings.keepDisplay && <circle cx="8" cy="7.2" r="1.4" fill="currentColor" />}
-                </svg>
-              </button>
-            )}
-            <button
-              type="button"
-              className="hold-end-btn"
-              style={
-                {
-                  "--hold-deg": `${Math.round(holdProgress * 360)}deg`,
-                } as React.CSSProperties
-              }
-              onMouseEnter={(e) => {
-                updateAnchorFromTarget(e.currentTarget);
-                setHoveredSession(null);
-                setHoveredControl("stop");
-              }}
-              onMouseLeave={() => setHoveredControl((prev) => (prev === "stop" ? null : prev))}
-              onPointerDown={startHoldToEnd}
-              onPointerUp={cancelHold}
-              onPointerLeave={cancelHold}
-              onPointerCancel={cancelHold}
-              aria-label="Hold to end awake session"
-            >
-              ×
-            </button>
-          </div>
-        )}
 
-        {/* Vertical Divider + Live Clock */}
-        <span className="capsule-divider" aria-hidden="true" />
-        <span className="capsule-clock">{clock}</span>
+              {showClock && (
+                <>
+                  <span className="capsule-divider" aria-hidden="true" />
+                  <span className="capsule-clock">{clock}</span>
+                </>
+              )}
+            </div>
+          );
+        })}
       </div>
     </div>
   );

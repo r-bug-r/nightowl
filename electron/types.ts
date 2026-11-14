@@ -69,10 +69,19 @@ export interface AwakeState {
 
 export type ThemePreset = "forest" | "minimal-dark" | "minimal-light";
 
+export type CapsuleSection = "agents" | "owl" | "time";
+
+export type HoverAnimationSpeed = "slow" | "normal" | "fast";
+
 export interface NightowlSettings {
   batteryThreshold: number;
   batterySafeStop: boolean;
   keepDisplay: boolean;
   autoAwakeForAgents: boolean;
   theme: ThemePreset;
+  capsuleScale?: number;
+  capsuleOrder?: CapsuleSection[];
+  hoverAnimation?: HoverAnimationSpeed;
+  clockFormat24h?: boolean;
+  showClock?: boolean;
 }

@@ -190,4 +190,121 @@ describe("SessionScanner", () => {
     expect(result).toHaveLength(1);
     expect(result[0].hwnd).toBe("102");
   });
+
+  it("detects titled Antigravity .db/.db-wal conversations <2h while filtering subagents, stale >2h, and idle one-offs", async () => {
+    const now = 1_794_643_700_000;
+    const agyBase = path.join(tmpHome, ".gemini", "antigravity");
+    const convDir = path.join(agyBase, "conversations");
+    const annDir = path.join(agyBase, "annotations");
+    const presDir = path.join(agyBase, "presence");
+    await fs.mkdir(convDir, { recursive: true });
+    await fs.mkdir(annDir, { recursive: true });
+    await fs.mkdir(presDir, { recursive: true });
+
+    const makeConv = async (opts: {
+      id: string;
+      ageMs: number;
+      sizeBytes: number;
+      title?: string;
+      hasLock?: boolean;
+      hasWal?: boolean;
+      walAgeMs?: number;
+    }) => {
+      const dbPath = path.join(convDir, `${opts.id}.db`);
+      await fs.writeFile(dbPath, Buffer.alloc(opts.sizeBytes, 1));
+      await fs.utimes(dbPath, new Date(now - opts.ageMs), new Date(now - opts.ageMs));
+      if (opts.hasWal) {
+        const walPath = path.join(convDir, `${opts.id}.db-wal`);
+        await fs.writeFile(walPath, "wal");
+        const wAge = opts.walAgeMs ?? opts.ageMs;
+        await fs.utimes(walPath, new Date(now - wAge), new Date(now - wAge));
+      }
+      if (opts.title !== undefined) {
+        const sec = Math.floor((now - opts.ageMs) / 1000);
+        await fs.writeFile(
+          path.join(annDir, `${opts.id}.pbtxt`),
+          `title:"${opts.title}" last_user_view_time:{seconds:${sec} nanos:0}`,
+          "utf8"
+        );
+      }
+      if (opts.hasLock) {
+        await fs.writeFile(path.join(presDir, `${opts.id}.lock`), "");
+      }
+    };
+
+    // 1. Active thinking conversation (73cd5bd8) via .db-wal
+    await makeConv({
+      id: "73cd5bd8-d6c2-4865-87c3-42119f4f701c",
+      ageMs: 90_000,
+      sizeBytes: 2_000_000,
+      title: "Automated Job Application Assistant Setup",
+      hasLock: true,
+      hasWal: true,
+      walAgeMs: 2_000,
+    });
+
+    // 2. Active recent conversation (7725e04e)
+    await makeConv({
+      id: "7725e04e-6a73-4027-be45-4d63c9af43da",
+      ageMs: 120_000,
+      sizeBytes: 3_500_000,
+      title: "Install Nightowl GitHub Repository",
+      hasLock: true,
+    });
+
+    // 3. Brand new small conversation (< 10m old) -> should be kept
+    await makeConv({
+      id: "new-small-1",
+      ageMs: 180_000,
+      sizeBytes: 400_000,
+      title: "Quick Setup Question",
+      hasLock: true,
+    });
+
+    // 4. Subagent (no annotation, no lock) -> excluded
+    await makeConv({
+      id: "subagent-1",
+      ageMs: 10_000,
+      sizeBytes: 1_500_000,
+    });
+
+    // 5. Old > 2h conversation -> excluded
+    await makeConv({
+      id: "stale-old-1",
+      ageMs: 2.5 * 3600_000,
+      sizeBytes: 4_000_000,
+      title: "Old Task",
+      hasLock: true,
+    });
+
+    // 6. Idle one-off (< 1MB, > 10m old) -> excluded
+    await makeConv({
+      id: "oneoff-1",
+      ageMs: 45 * 60_000,
+      sizeBytes: 700_000,
+      title: "One Off Fix",
+      hasLock: true,
+    });
+
+    const snapshot: NativeSnapshot = {
+      processes: [{ pid: 500, parentPid: 1, name: "Antigravity.exe" }],
+      windows: [
+        { hwnd: "802", pid: 500, processName: "Antigravity.exe", title: "nightowl - Antigravity", isMinimized: false },
+      ],
+      taskbar: { left: 0, top: 1032, right: 1920, bottom: 1080 },
+      workArea: { left: 0, top: 0, right: 1920, bottom: 1032 },
+    };
+
+    const scanner = new SessionScanner({ homeDir: tmpHome, now: () => now, selfPid: 99999 });
+    const result = await scanner.scan(snapshot);
+
+    expect(result.map((s) => s.id)).toEqual([
+      "antigravity:conv:73cd5bd8-d6c2-4865-87c3-42119f4f701c",
+      "antigravity:conv:7725e04e-6a73-4027-be45-4d63c9af43da",
+      "antigravity:conv:new-small-1",
+    ]);
+    expect(result[0].state).toBe("thinking");
+    expect(result[1].state).toBe("idle");
+    expect(result[0].hwnd).toBe("802");
+  });
 });
