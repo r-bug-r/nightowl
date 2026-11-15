@@ -323,7 +323,7 @@ function createCapsuleWindow(): void {
     minimizable: false,
     maximizable: false,
     hasShadow: false,
-    focusable: true,
+    focusable: false,
     show: false,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
@@ -499,11 +499,22 @@ function registerIpc(): void {
     return settings;
   });
 
-  ipcMain.handle("nightowl:focusSession", async (_ev, hwnd: string) => {
-    if (capsuleWindow && !capsuleWindow.isDestroyed() && capsuleWindow.isFocused()) {
-      capsuleWindow.blur();
+  ipcMain.handle(
+    "nightowl:focusSession",
+    async (_ev, hwnd: string, tabTitle?: string, sessionId?: string) => {
+      if (capsuleWindow && !capsuleWindow.isDestroyed() && capsuleWindow.isFocused()) {
+        capsuleWindow.blur();
+      }
+      return nativeBridge.focusWindow(hwnd, tabTitle, sessionId);
     }
-    return nativeBridge.focusWindow(hwnd);
+  );
+
+  ipcMain.on("nightowl:setCapsuleFocusable", (_ev, focusable: boolean) => {
+    if (!capsuleWindow || capsuleWindow.isDestroyed()) return;
+    capsuleWindow.setFocusable(Boolean(focusable));
+    if (focusable) {
+      capsuleWindow.focus();
+    }
   });
 
   ipcMain.on("nightowl:resizeCapsule", () => {

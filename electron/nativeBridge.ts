@@ -113,8 +113,16 @@ export class NativeBridge {
     return this.call<NativeSnapshot>("snapshot");
   }
 
-  async focusWindow(hwnd: string): Promise<{ focused: boolean; reason?: string }> {
-    return this.call<{ focused: boolean; reason?: string }>("focusWindow", { hwnd });
+  async focusWindow(
+    hwnd: string,
+    tabTitle?: string,
+    sessionId?: string
+  ): Promise<{ focused: boolean; tabSelected?: boolean; reason?: string }> {
+    return this.call<{ focused: boolean; tabSelected?: boolean; reason?: string }>("focusWindow", {
+      hwnd,
+      tabTitle,
+      sessionId,
+    });
   }
 
   async stripWindowChrome(hwnd: string): Promise<{ stripped: boolean }> {

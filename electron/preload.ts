@@ -7,9 +7,14 @@ export interface NightowlApi {
   addAwakeTime: (deltaMs: number) => Promise<AwakeState>;
   stopAwake: () => Promise<AwakeState>;
   updateSettings: (patch: Partial<NightowlSettings>) => Promise<NightowlSettings>;
-  focusSession: (hwnd: string) => Promise<{ focused: boolean; reason?: string }>;
+  focusSession: (
+    hwnd: string,
+    tabTitle?: string,
+    sessionId?: string
+  ) => Promise<{ focused: boolean; tabSelected?: boolean; reason?: string }>;
   resizeCapsule: (width: number, height: number) => void;
   setIgnoreMouse: (ignore: boolean) => void;
+  setCapsuleFocusable: (focusable: boolean) => void;
   moveCapsuleBy: (dx: number, dy: number) => void;
   resetCapsulePosition: () => void;
   openDiagnostics: () => void;
@@ -25,9 +30,11 @@ const api: NightowlApi = {
   addAwakeTime: (deltaMs) => ipcRenderer.invoke("nightowl:addAwakeTime", deltaMs),
   stopAwake: () => ipcRenderer.invoke("nightowl:stopAwake"),
   updateSettings: (patch) => ipcRenderer.invoke("nightowl:updateSettings", patch),
-  focusSession: (hwnd) => ipcRenderer.invoke("nightowl:focusSession", hwnd),
+  focusSession: (hwnd, tabTitle, sessionId) =>
+    ipcRenderer.invoke("nightowl:focusSession", hwnd, tabTitle, sessionId),
   resizeCapsule: (width, height) => ipcRenderer.send("nightowl:resizeCapsule", { width, height }),
   setIgnoreMouse: (ignore) => ipcRenderer.send("nightowl:setIgnoreMouse", ignore),
+  setCapsuleFocusable: (focusable) => ipcRenderer.send("nightowl:setCapsuleFocusable", focusable),
   moveCapsuleBy: (dx, dy) => ipcRenderer.send("nightowl:moveCapsuleBy", { dx, dy }),
   resetCapsulePosition: () => ipcRenderer.send("nightowl:resetCapsulePosition"),
   openDiagnostics: () => ipcRenderer.send("nightowl:openDiagnostics"),

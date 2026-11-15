@@ -62,9 +62,14 @@ export interface NightowlApi {
   addAwakeTime: (deltaMs: number) => Promise<AwakeState>;
   stopAwake: () => Promise<AwakeState>;
   updateSettings: (patch: Partial<NightowlSettings>) => Promise<NightowlSettings>;
-  focusSession: (hwnd: string) => Promise<{ focused: boolean; reason?: string }>;
+  focusSession: (
+    hwnd: string,
+    tabTitle?: string,
+    sessionId?: string
+  ) => Promise<{ focused: boolean; tabSelected?: boolean; reason?: string }>;
   resizeCapsule: (width: number, height: number) => void;
   setIgnoreMouse: (ignore: boolean) => void;
+  setCapsuleFocusable: (focusable: boolean) => void;
   moveCapsuleBy: (dx: number, dy: number) => void;
   resetCapsulePosition: () => void;
   openDiagnostics: () => void;

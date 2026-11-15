@@ -321,9 +321,14 @@ export const App: React.FC = () => {
     holdRafRef.current = requestAnimationFrame(tick);
   };
 
+  useEffect(() => {
+    if (isDiagnostics) return;
+    window.nightowl?.setCapsuleFocusable(timerOpen);
+  }, [isDiagnostics, timerOpen]);
+
   const handleFocusAgent = async (session: AgentSession) => {
     if (!session.hwnd) return;
-    await window.nightowl?.focusSession(session.hwnd);
+    await window.nightowl?.focusSession(session.hwnd, session.projectName, session.id);
   };
 
   const handleCapsulePointerDown = (e: React.PointerEvent) => {
@@ -444,8 +449,9 @@ export const App: React.FC = () => {
           const next = await window.nightowl?.stopAwake();
           if (next) setAwake(next);
         }}
-        onFocusSession={(hwnd) => {
-          void window.nightowl?.focusSession(hwnd);
+        onFocusSession={(session) => {
+          if (!session.hwnd) return;
+          void window.nightowl?.focusSession(session.hwnd, session.projectName, session.id);
         }}
         onResetPosition={() => {
           window.nightowl?.resetCapsulePosition();

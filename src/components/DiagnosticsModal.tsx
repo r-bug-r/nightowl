@@ -18,7 +18,7 @@ interface DiagnosticsModalProps {
   onSelectTheme: (theme: ThemePreset) => void;
   onStartQuick: (hours: number) => void;
   onStop: () => void;
-  onFocusSession: (hwnd: string) => void;
+  onFocusSession: (session: AgentSession) => void;
   onResetPosition: () => void;
 }
 
@@ -331,7 +331,7 @@ export const DiagnosticsModal: React.FC<DiagnosticsModalProps> = ({
                 <button
                   type="button"
                   disabled={!s.hwnd}
-                  onClick={() => s.hwnd && onFocusSession(s.hwnd)}
+                  onClick={() => s.hwnd && onFocusSession(s)}
                 >
                   {s.hwnd ? "Focus" : "No window"}
                 </button>

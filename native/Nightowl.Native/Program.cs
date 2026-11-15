@@ -94,8 +94,21 @@ internal static class Program
             : hwndProp.GetInt64();
 
         var hwnd = new IntPtr(hwndLong);
+        string? tabTitle = root.TryGetProperty("tabTitle", out var ttProp) && ttProp.ValueKind == JsonValueKind.String
+            ? ttProp.GetString()
+            : null;
+        string? sessionId = root.TryGetProperty("sessionId", out var sidProp) && sidProp.ValueKind == JsonValueKind.String
+            ? sidProp.GetString()
+            : null;
+
         var (focused, reason) = Win32.FocusWindow(hwnd);
-        return new { focused, reason };
+        bool tabSelected = false;
+        string? tabSelectDetail = null;
+        if (focused && (!string.IsNullOrWhiteSpace(tabTitle) || !string.IsNullOrWhiteSpace(sessionId)))
+        {
+            (tabSelected, tabSelectDetail) = Win32.TrySelectTabByTitle(hwnd, tabTitle, sessionId);
+        }
+        return new { focused, reason, tabSelected, tabSelectDetail };
     }
 
     private static object HandleStripWindowChrome(JsonElement root)
@@ -560,6 +573,7 @@ internal static class Win32
     {
         if (!IsWindow(hwnd)) return false;
         const int GWL_STYLE = -16;
+        const int GWL_EXSTYLE = -20;
         const long WS_CAPTION = 0x00C00000L;
         const long WS_THICKFRAME = 0x00040000L;
         const long WS_BORDER = 0x00800000L;
@@ -567,6 +581,9 @@ internal static class Win32
         const long WS_MINIMIZEBOX = 0x00020000L;
         const long WS_MAXIMIZEBOX = 0x00010000L;
         const long WS_SYSMENU = 0x00080000L;
+        const long WS_EX_DLGMODALFRAME = 0x00000001L;
+        const long WS_EX_WINDOWEDGE = 0x00000100L;
+        const long WS_EX_CLIENTEDGE = 0x00000200L;
         const uint SWP_NOSIZE = 0x0001;
         const uint SWP_NOMOVE = 0x0002;
         const uint SWP_NOZORDER = 0x0004;
@@ -579,6 +596,14 @@ internal static class Win32
         if (nextStyle != style)
         {
             SetWindowLongPtr(hwnd, GWL_STYLE, new IntPtr(nextStyle));
+        }
+
+        long exStyle = GetWindowLongPtr(hwnd, GWL_EXSTYLE).ToInt64();
+        long exMask = WS_EX_DLGMODALFRAME | WS_EX_WINDOWEDGE | WS_EX_CLIENTEDGE;
+        long nextExStyle = exStyle & ~exMask;
+        if (nextExStyle != exStyle)
+        {
+            SetWindowLongPtr(hwnd, GWL_EXSTYLE, new IntPtr(nextExStyle));
         }
         return SetWindowPos(
             hwnd,
@@ -644,5 +669,539 @@ internal static class Win32
             if (attachedTarget) AttachThreadInput(currentThread, targetThread, false);
             if (attachedFg) AttachThreadInput(currentThread, fgThread, false);
         }
+    }
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool EnumChildWindows(IntPtr hWndParent, EnumWindowsProc lpEnumFunc, IntPtr lParam);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetClassNameW(IntPtr hWnd, StringBuilder lpClassName, int nMaxCount);
+
+    [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern IntPtr SendMessageTimeoutW(
+        IntPtr hWnd,
+        uint Msg,
+        UIntPtr wParam,
+        IntPtr lParam,
+        uint fuFlags,
+        uint uTimeout,
+        out UIntPtr lpdwResult);
+
+    [DllImport("oleacc.dll")]
+    private static extern int AccessibleObjectFromWindow(
+        IntPtr hwnd,
+        uint dwId,
+        ref Guid riid,
+        [MarshalAs(UnmanagedType.IUnknown)] out object? ppvObject);
+
+    private const int UIA_ControlTypePropertyId = 30003;
+    private const int UIA_ButtonControlTypeId = 50000;
+    private const int UIA_HyperlinkControlTypeId = 50005;
+    private const int UIA_ListItemControlTypeId = 50007;
+    private const int UIA_TabItemControlTypeId = 50019;
+    private const int UIA_TreeItemControlTypeId = 50023;
+    private const int TreeScope_Descendants = 4;
+    private const int UIA_InvokePatternId = 10000;
+    private const int UIA_ValuePatternId = 10002;
+    private const int UIA_SelectionItemPatternId = 10010;
+    private const int UIA_LegacyIAccessiblePatternId = 10018;
+
+    public static (bool Selected, string? Detail) TrySelectTabByTitle(IntPtr hwnd, string? tabTitle, string? sessionId = null)
+    {
+        if (!IsWindow(hwnd)) return (false, "invalid hwnd");
+
+        string needle = tabTitle?.Trim() ?? string.Empty;
+        string convId = string.Empty;
+        if (!string.IsNullOrWhiteSpace(sessionId) &&
+            sessionId.StartsWith("antigravity:conv:", StringComparison.OrdinalIgnoreCase))
+        {
+            convId = sessionId.Substring("antigravity:conv:".Length).Trim();
+        }
+
+        if (string.IsNullOrEmpty(needle) && string.IsNullOrEmpty(convId))
+        {
+            return (false, "empty target");
+        }
+
+        try
+        {
+            var uiaType = Type.GetTypeFromCLSID(new Guid("ff48dba4-60ef-4201-aa87-54103eef594e"));
+            if (uiaType == null) return (false, "UIA CLSID not found");
+            var uia = (IUIAutomation)Activator.CreateInstance(uiaType)!;
+
+            var cLink = uia.CreatePropertyCondition(UIA_ControlTypePropertyId, UIA_HyperlinkControlTypeId);
+            var cTab = uia.CreatePropertyCondition(UIA_ControlTypePropertyId, UIA_TabItemControlTypeId);
+            var cList = uia.CreatePropertyCondition(UIA_ControlTypePropertyId, UIA_ListItemControlTypeId);
+            var cTree = uia.CreatePropertyCondition(UIA_ControlTypePropertyId, UIA_TreeItemControlTypeId);
+            var cBtn = uia.CreatePropertyCondition(UIA_ControlTypePropertyId, UIA_ButtonControlTypeId);
+            var cond = uia.CreateOrCondition(
+                cLink,
+                uia.CreateOrCondition(
+                    uia.CreateOrCondition(cTab, cList),
+                    uia.CreateOrCondition(cTree, cBtn)
+                )
+            );
+
+            var candidateWindows = CollectCandidateTopWindows(hwnd);
+            bool toggledSidebar = false;
+
+            for (int attempt = 0; attempt < 10; attempt++)
+            {
+                IUIAutomationElement? bestEl = null;
+                int bestScore = 0;
+                int bestCtrlType = 0;
+                string bestDesc = string.Empty;
+                IntPtr bestTopHwnd = hwnd;
+
+                int totalInteractive = 0;
+                int convoLinkCount = 0;
+                IUIAutomationElement? toggleSidebarBtn = null;
+
+                foreach (var topHwnd in candidateWindows)
+                {
+                    var searchRoots = CollectRenderAndWindowRoots(topHwnd);
+                    foreach (var rootHwnd in searchRoots)
+                    {
+                        WakeUpAccessibility(rootHwnd);
+                        IUIAutomationElement? root;
+                        try
+                        {
+                            root = uia.ElementFromHandle(rootHwnd);
+                        }
+                        catch
+                        {
+                            continue;
+                        }
+                        if (root == null) continue;
+
+                        try
+                        {
+                            _ = root.CurrentName;
+                            if (root.GetCurrentPattern(UIA_LegacyIAccessiblePatternId) is IUIAutomationLegacyIAccessiblePattern rootLeg)
+                            {
+                                _ = rootLeg.CurrentName;
+                                _ = rootLeg.CurrentRole;
+                            }
+                        }
+                        catch
+                        {
+                            // ignore warmup probe error
+                        }
+
+                        IUIAutomationElementArray? found;
+                        try
+                        {
+                            found = root.FindAll(TreeScope_Descendants, cond);
+                        }
+                        catch
+                        {
+                            continue;
+                        }
+                        if (found == null) continue;
+
+                        int len = Math.Min(found.Length, 2000);
+                        totalInteractive += len;
+
+                        for (int i = 0; i < len; i++)
+                        {
+                            IUIAutomationElement? el;
+                            try
+                            {
+                                el = found.GetElement(i);
+                            }
+                            catch
+                            {
+                                continue;
+                            }
+                            if (el == null) continue;
+
+                            int ctrlType = 0;
+                            try { ctrlType = el.CurrentControlType; } catch { }
+
+                            string? name = TryGetElementName(el);
+                            string? val = TryGetElementValue(el);
+
+                            bool isConvoLink = !string.IsNullOrEmpty(val) &&
+                                val.Contains("/c/", StringComparison.OrdinalIgnoreCase);
+                            if (isConvoLink) convoLinkCount++;
+
+                            if (ctrlType == UIA_ButtonControlTypeId &&
+                                !string.IsNullOrEmpty(name) &&
+                                name.Equals("Toggle Sidebar", StringComparison.OrdinalIgnoreCase))
+                            {
+                                toggleSidebarBtn ??= el;
+                            }
+
+                            int score = ScoreElement(ctrlType, name, val, isConvoLink, needle, convId);
+                            if (score > bestScore)
+                            {
+                                bestScore = score;
+                                bestEl = el;
+                                bestCtrlType = ctrlType;
+                                bestTopHwnd = topHwnd;
+                                bestDesc = $"score={score} ctrl={ctrlType} name={name} val={val}";
+                                if (score >= 100) break;
+                            }
+                        }
+
+                        if (bestScore >= 100) break;
+                    }
+
+                    if (bestScore >= 100) break;
+                }
+
+                if (bestEl != null)
+                {
+                    if (bestTopHwnd != hwnd)
+                    {
+                        FocusWindow(bestTopHwnd);
+                    }
+                    if (ActivateElement(bestEl, bestCtrlType, out string method))
+                    {
+                        return (true, $"{method} ({bestDesc})");
+                    }
+                }
+
+                if (attempt >= 2 && totalInteractive >= 5 && convoLinkCount == 0 && !toggledSidebar && toggleSidebarBtn != null)
+                {
+                    toggledSidebar = true;
+                    ActivateElement(toggleSidebarBtn, UIA_ButtonControlTypeId, out _);
+                    Thread.Sleep(160);
+                    continue;
+                }
+
+                Thread.Sleep(85);
+            }
+
+            return (false, "target element not found after retries");
+        }
+        catch (Exception ex)
+        {
+            return (false, ex.Message);
+        }
+    }
+
+    private static List<IntPtr> CollectCandidateTopWindows(IntPtr primaryHwnd)
+    {
+        var list = new List<IntPtr> { primaryHwnd };
+        GetWindowThreadProcessId(primaryHwnd, out uint targetPid);
+        if (targetPid == 0) return list;
+
+        EnumWindows((w, _) =>
+        {
+            if (w == primaryHwnd || !IsWindowVisible(w)) return true;
+            GetWindowThreadProcessId(w, out uint pid);
+            if (pid == targetPid && GetWindowTextLengthW(w) > 0)
+            {
+                list.Add(w);
+            }
+            return true;
+        }, IntPtr.Zero);
+
+        return list;
+    }
+
+    private static List<IntPtr> CollectRenderAndWindowRoots(IntPtr topHwnd)
+    {
+        var renderHwnds = new List<IntPtr>();
+        var widgetHwnds = new List<IntPtr>();
+
+        EnumChildWindows(topHwnd, (child, _) =>
+        {
+            var sb = new StringBuilder(128);
+            if (GetClassNameW(child, sb, sb.Capacity) > 0)
+            {
+                string cls = sb.ToString();
+                if (cls.Equals("Chrome_RenderWidgetHostHWND", StringComparison.OrdinalIgnoreCase))
+                {
+                    renderHwnds.Add(child);
+                }
+                else if (cls.StartsWith("Chrome_WidgetWin_", StringComparison.OrdinalIgnoreCase))
+                {
+                    widgetHwnds.Add(child);
+                }
+            }
+            return true;
+        }, IntPtr.Zero);
+
+        // Put newest/topmostWebContentsView render widgets first, then widget windows, then topHwnd
+        renderHwnds.Reverse();
+        var all = new List<IntPtr>(renderHwnds.Count + widgetHwnds.Count + 1);
+        all.AddRange(renderHwnds);
+        all.AddRange(widgetHwnds);
+        all.Add(topHwnd);
+        return all;
+    }
+
+    private static void WakeUpAccessibility(IntPtr targetHwnd)
+    {
+        const uint WM_GETOBJECT = 0x003D;
+        const int OBJID_CLIENT = unchecked((int)0xFFFFFFFC);
+        const uint SMTO_ABORTIFHUNG = 0x0002;
+        try
+        {
+            SendMessageTimeoutW(
+                targetHwnd,
+                WM_GETOBJECT,
+                UIntPtr.Zero,
+                new IntPtr(OBJID_CLIENT),
+                SMTO_ABORTIFHUNG,
+                80,
+                out _
+            );
+            var iidAcc = new Guid("618736e0-3c3d-11cf-810c-00aa00389b71");
+            AccessibleObjectFromWindow(targetHwnd, unchecked((uint)OBJID_CLIENT), ref iidAcc, out _);
+        }
+        catch
+        {
+            // ignore warmup error
+        }
+    }
+
+    private static string? TryGetElementName(IUIAutomationElement el)
+    {
+        try
+        {
+            string? name = el.CurrentName;
+            if (!string.IsNullOrWhiteSpace(name)) return name.Trim();
+        }
+        catch { }
+
+        try
+        {
+            if (el.GetCurrentPattern(UIA_LegacyIAccessiblePatternId) is IUIAutomationLegacyIAccessiblePattern leg)
+            {
+                string? legName = leg.CurrentName;
+                if (!string.IsNullOrWhiteSpace(legName)) return legName.Trim();
+            }
+        }
+        catch { }
+
+        return null;
+    }
+
+    private static string? TryGetElementValue(IUIAutomationElement el)
+    {
+        try
+        {
+            if (el.GetCurrentPattern(UIA_ValuePatternId) is IUIAutomationValuePattern valPat)
+            {
+                string? val = valPat.CurrentValue;
+                if (!string.IsNullOrWhiteSpace(val)) return val.Trim();
+            }
+        }
+        catch { }
+
+        try
+        {
+            if (el.GetCurrentPattern(UIA_LegacyIAccessiblePatternId) is IUIAutomationLegacyIAccessiblePattern leg)
+            {
+                string? legVal = leg.CurrentValue;
+                if (!string.IsNullOrWhiteSpace(legVal)) return legVal.Trim();
+            }
+        }
+        catch { }
+
+        return null;
+    }
+
+    private static int ScoreElement(
+        int ctrlType,
+        string? name,
+        string? val,
+        bool isConvoLink,
+        string needle,
+        string convId)
+    {
+        if (!string.IsNullOrEmpty(convId) && !string.IsNullOrEmpty(val) &&
+            val.Contains(convId, StringComparison.OrdinalIgnoreCase))
+        {
+            return 100;
+        }
+
+        if (string.IsNullOrEmpty(needle) || string.IsNullOrEmpty(name))
+        {
+            return 0;
+        }
+
+        if (name.Equals(needle, StringComparison.OrdinalIgnoreCase))
+        {
+            if (isConvoLink) return 96;
+            if (ctrlType == UIA_HyperlinkControlTypeId || ctrlType == UIA_TabItemControlTypeId) return 92;
+            return 88;
+        }
+
+        string trimmedNeedle = needle.TrimEnd('.', '…').Trim();
+        if (trimmedNeedle.Length >= 4 &&
+            (name.Contains(trimmedNeedle, StringComparison.OrdinalIgnoreCase) ||
+             (name.Length >= 8 && trimmedNeedle.Contains(name, StringComparison.OrdinalIgnoreCase))))
+        {
+            if (isConvoLink) return 84;
+            if (ctrlType == UIA_HyperlinkControlTypeId || ctrlType == UIA_TabItemControlTypeId) return 76;
+            if (ctrlType == UIA_ListItemControlTypeId || ctrlType == UIA_TreeItemControlTypeId) return 72;
+            return 62;
+        }
+
+        return 0;
+    }
+
+    private static bool ActivateElement(IUIAutomationElement el, int ctrlType, out string method)
+    {
+        method = "none";
+
+        if (ctrlType == UIA_TabItemControlTypeId)
+        {
+            try
+            {
+                if (el.GetCurrentPattern(UIA_SelectionItemPatternId) is IUIAutomationSelectionItemPattern selPat)
+                {
+                    selPat.Select();
+                    method = "SelectionItemPattern.Select";
+                    return true;
+                }
+            }
+            catch { }
+        }
+
+        try
+        {
+            if (el.GetCurrentPattern(UIA_InvokePatternId) is IUIAutomationInvokePattern invPat)
+            {
+                invPat.Invoke();
+                method = "InvokePattern.Invoke";
+                return true;
+            }
+        }
+        catch { }
+
+        try
+        {
+            if (el.GetCurrentPattern(UIA_LegacyIAccessiblePatternId) is IUIAutomationLegacyIAccessiblePattern legPat)
+            {
+                legPat.DoDefaultAction();
+                method = "LegacyIAccessiblePattern.DoDefaultAction";
+                return true;
+            }
+        }
+        catch { }
+
+        if (ctrlType != UIA_TabItemControlTypeId)
+        {
+            try
+            {
+                if (el.GetCurrentPattern(UIA_SelectionItemPatternId) is IUIAutomationSelectionItemPattern selPat)
+                {
+                    selPat.Select();
+                    method = "SelectionItemPattern.Select";
+                    return true;
+                }
+            }
+            catch { }
+        }
+
+        return false;
+    }
+
+    [ComImport, Guid("30cbe57d-d9d0-452a-ab13-7ac5ac4825ee"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface IUIAutomation
+    {
+        void CompareElements();
+        void CompareRuntimeIds();
+        IUIAutomationElement GetRootElement();
+        IUIAutomationElement ElementFromHandle(IntPtr hwnd);
+        void ElementFromPoint();
+        void GetFocusedElement();
+        void GetRootElementBuildCache();
+        void ElementFromHandleBuildCache();
+        void ElementFromPointBuildCache();
+        void GetFocusedElementBuildCache();
+        void CreateTreeWalker();
+        void GetControlViewWalker();
+        void GetContentViewWalker();
+        void GetRawViewWalker();
+        void GetRawViewCondition();
+        IUIAutomationCondition GetControlViewCondition();
+        IUIAutomationCondition GetContentViewCondition();
+        void CreateCacheRequest();
+        IUIAutomationCondition CreateTrueCondition();
+        IUIAutomationCondition CreateFalseCondition();
+        IUIAutomationCondition CreatePropertyCondition(int propertyId, [MarshalAs(UnmanagedType.Struct)] object value);
+        void CreatePropertyConditionEx();
+        IUIAutomationCondition CreateAndCondition(IUIAutomationCondition condition1, IUIAutomationCondition condition2);
+        void CreateAndConditionFromArray();
+        void CreateAndConditionFromNativeArray();
+        IUIAutomationCondition CreateOrCondition(IUIAutomationCondition condition1, IUIAutomationCondition condition2);
+    }
+
+    [ComImport, Guid("352ffba8-0973-437c-a61f-f64cafd81df9"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface IUIAutomationCondition { }
+
+    [ComImport, Guid("14314595-b4bc-4055-95f2-58f2e42c9855"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface IUIAutomationElementArray
+    {
+        int Length { get; }
+        IUIAutomationElement GetElement(int index);
+    }
+
+    [ComImport, Guid("d22108aa-8ac5-49a5-837b-37bbb3d7591e"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface IUIAutomationElement
+    {
+        void SetFocus();
+        void GetRuntimeId();
+        IUIAutomationElement FindFirst(int scope, IUIAutomationCondition condition);
+        IUIAutomationElementArray FindAll(int scope, IUIAutomationCondition condition);
+        void FindFirstBuildCache();
+        void FindAllBuildCache();
+        void BuildUpdatedCache();
+        void GetCurrentPropertyValue();
+        void GetCurrentPropertyValueEx();
+        void GetCachedPropertyValue();
+        void GetCachedPropertyValueEx();
+        [return: MarshalAs(UnmanagedType.IUnknown)]
+        object? GetCurrentPatternAs(int patternId, ref Guid riid);
+        [return: MarshalAs(UnmanagedType.IUnknown)]
+        object? GetCachedPatternAs(int patternId, ref Guid riid);
+        [return: MarshalAs(UnmanagedType.IUnknown)]
+        object? GetCurrentPattern(int patternId);
+        void GetCachedPattern();
+        void GetCachedParent();
+        void GetCachedChildren();
+        int CurrentProcessId { get; }
+        int CurrentControlType { get; }
+        string CurrentLocalizedControlType { [return: MarshalAs(UnmanagedType.BStr)] get; }
+        string CurrentName { [return: MarshalAs(UnmanagedType.BStr)] get; }
+    }
+
+    [ComImport, Guid("a8efa66a-0fda-421a-9194-38021f3578ea"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface IUIAutomationSelectionItemPattern
+    {
+        void Select();
+    }
+
+    [ComImport, Guid("fb377fbe-8ea6-46d5-9c73-6499642d3059"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface IUIAutomationInvokePattern
+    {
+        void Invoke();
+    }
+
+    [ComImport, Guid("a94cd8b1-0844-4cd6-9d2d-640537ab39e9"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface IUIAutomationValuePattern
+    {
+        void SetValue([MarshalAs(UnmanagedType.BStr)] string val);
+        string CurrentValue { [return: MarshalAs(UnmanagedType.BStr)] get; }
+    }
+
+    [ComImport, Guid("828055ad-355b-4435-86d5-3b51c14a9b1b"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface IUIAutomationLegacyIAccessiblePattern
+    {
+        void Select(int flagsSelect);
+        void DoDefaultAction();
+        void SetValue([MarshalAs(UnmanagedType.LPWStr)] string szValue);
+        int CurrentChildId { get; }
+        string CurrentName { [return: MarshalAs(UnmanagedType.BStr)] get; }
+        string CurrentValue { [return: MarshalAs(UnmanagedType.BStr)] get; }
+        string CurrentDescription { [return: MarshalAs(UnmanagedType.BStr)] get; }
+        uint CurrentRole { get; }
     }
 }
