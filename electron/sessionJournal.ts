@@ -1,11 +1,13 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import type { LidActionBackup } from "./types";
 
 export interface SessionJournalRecord {
   active: boolean;
   startedAt: number;
   endsAt: number | null;
   keepDisplay: boolean;
+  lidActionBackup?: LidActionBackup | null;
   cleanExit: boolean;
   updatedAt: number;
 }
@@ -41,7 +43,11 @@ export class SessionJournal {
     }
   }
 
-  async writeActive(endsAt: number | null, keepDisplay: boolean): Promise<void> {
+  async writeActive(
+    endsAt: number | null,
+    keepDisplay: boolean,
+    lidActionBackup: LidActionBackup | null = null
+  ): Promise<void> {
     const dir = path.dirname(this.filePath);
     await fs.mkdir(dir, { recursive: true });
     const now = Date.now();
@@ -50,6 +56,7 @@ export class SessionJournal {
       startedAt: now,
       endsAt,
       keepDisplay,
+      lidActionBackup,
       cleanExit: false,
       updatedAt: now,
     };
@@ -67,6 +74,7 @@ export class SessionJournal {
         startedAt: 0,
         endsAt: null,
         keepDisplay: false,
+        lidActionBackup: null,
         cleanExit,
         updatedAt: Date.now(),
       };

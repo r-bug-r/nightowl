@@ -2,7 +2,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { app } from "electron";
 import path from "node:path";
 import readline from "node:readline";
-import type { NativeSnapshot, PowerStatus } from "./types";
+import type { LidActionBackup, NativeSnapshot, PowerStatus } from "./types";
 
 interface PendingCall {
   resolve: (value: unknown) => void;
@@ -101,8 +101,24 @@ export class NativeBridge {
     });
   }
 
-  async setAwake(keepAwake: boolean, keepDisplay: boolean): Promise<void> {
-    await this.call("setAwake", { keepAwake, keepDisplay });
+  async setAwake(
+    keepAwake: boolean,
+    keepDisplay: boolean,
+    keepAwakeLidClosed = true
+  ): Promise<{ lidBackup?: LidActionBackup | null }> {
+    return this.call<{ lidBackup?: LidActionBackup | null }>("setAwake", {
+      keepAwake,
+      keepDisplay,
+      keepAwakeLidClosed,
+    });
+  }
+
+  async restoreLidAction(backup: LidActionBackup): Promise<{ restored: boolean }> {
+    return this.call<{ restored: boolean }>("restoreLidAction", {
+      schemeGuid: backup.schemeGuid,
+      acValue: backup.acValue,
+      dcValue: backup.dcValue,
+    });
   }
 
   async getPowerStatus(): Promise<PowerStatus> {

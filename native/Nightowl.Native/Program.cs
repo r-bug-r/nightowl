@@ -36,6 +36,7 @@ internal static class Program
         finally
         {
             PowerThread.Stop();
+            Win32.RestoreSavedLidAction();
         }
 
         return 0;
@@ -58,6 +59,7 @@ internal static class Program
             object result = cmd switch
             {
                 "setAwake" => HandleSetAwake(root),
+                "restoreLidAction" => HandleRestoreLidAction(root),
                 "getPowerStatus" => Win32.GetPowerStatus(),
                 "snapshot" => Win32.TakeSnapshot(),
                 "focusWindow" => HandleFocusWindow(root),
@@ -78,8 +80,26 @@ internal static class Program
     {
         bool keepAwake = root.TryGetProperty("keepAwake", out var ka) && ka.GetBoolean();
         bool keepDisplay = root.TryGetProperty("keepDisplay", out var kd) && kd.GetBoolean();
+        bool keepAwakeLidClosed = !root.TryGetProperty("keepAwakeLidClosed", out var kl) || kl.GetBoolean();
         var applied = PowerThread.SetState(keepAwake, keepDisplay);
-        return new { keepAwake, keepDisplay, executionState = applied };
+        var lidBackup = Win32.ApplyLidCloseOverride(keepAwake && keepAwakeLidClosed);
+        return new { keepAwake, keepDisplay, executionState = applied, lidBackup };
+    }
+
+    private static object HandleRestoreLidAction(JsonElement root)
+    {
+        if (!root.TryGetProperty("schemeGuid", out var sgProp) ||
+            !Guid.TryParse(sgProp.GetString(), out var schemeGuid) ||
+            !root.TryGetProperty("acValue", out var acProp) ||
+            !root.TryGetProperty("dcValue", out var dcProp))
+        {
+            return new { restored = false, reason = "invalid backup payload" };
+        }
+
+        uint ac = acProp.GetUInt32();
+        uint dc = dcProp.GetUInt32();
+        bool restored = Win32.RestoreLidActionValues(schemeGuid, ac, dc);
+        return new { restored };
     }
 
     private static object HandleFocusWindow(JsonElement root)
@@ -322,6 +342,9 @@ internal static class Win32
     [DllImport("dwmapi.dll")]
     private static extern int DwmGetWindowAttribute(IntPtr hwnd, int dwAttribute, out int pvAttribute, int cbAttribute);
 
+    [DllImport("dwmapi.dll")]
+    private static extern int DwmSetWindowAttribute(IntPtr hwnd, int dwAttribute, ref int pvAttribute, int cbAttribute);
+
     [DllImport("shell32.dll")]
     private static extern UIntPtr SHAppBarMessage(uint dwMessage, ref APPBARDATA pData);
 
@@ -382,6 +405,151 @@ internal static class Win32
         public uint uEdge;
         public RECT rc;
         public IntPtr lParam;
+    }
+
+    [DllImport("powrprof.dll")]
+    private static extern uint PowerGetActiveScheme(IntPtr UserRootPowerKey, out IntPtr ActivePolicyGuid);
+
+    [DllImport("powrprof.dll")]
+    private static extern uint PowerReadACValueIndex(
+        IntPtr RootPowerKey,
+        ref Guid SchemeGuid,
+        ref Guid SubGroupOfPowerSettingsGuid,
+        ref Guid PowerSettingGuid,
+        out uint AcValueIndex);
+
+    [DllImport("powrprof.dll")]
+    private static extern uint PowerReadDCValueIndex(
+        IntPtr RootPowerKey,
+        ref Guid SchemeGuid,
+        ref Guid SubGroupOfPowerSettingsGuid,
+        ref Guid PowerSettingGuid,
+        out uint DcValueIndex);
+
+    [DllImport("powrprof.dll")]
+    private static extern uint PowerWriteACValueIndex(
+        IntPtr RootPowerKey,
+        ref Guid SchemeGuid,
+        ref Guid SubGroupOfPowerSettingsGuid,
+        ref Guid PowerSettingGuid,
+        uint AcValueIndex);
+
+    [DllImport("powrprof.dll")]
+    private static extern uint PowerWriteDCValueIndex(
+        IntPtr RootPowerKey,
+        ref Guid SchemeGuid,
+        ref Guid SubGroupOfPowerSettingsGuid,
+        ref Guid PowerSettingGuid,
+        uint DcValueIndex);
+
+    [DllImport("powrprof.dll")]
+    private static extern uint PowerSetActiveScheme(IntPtr UserRootPowerKey, ref Guid SchemeGuid);
+
+    [DllImport("kernel32.dll")]
+    private static extern IntPtr LocalFree(IntPtr hMem);
+
+    private static readonly Guid GuidSubButtons = new("4f971e89-eebd-4455-a8de-9e59040e7347");
+    private static readonly Guid GuidLidAction = new("5ca83367-6e45-459f-a27b-476b1d01c936");
+    private static readonly object LidLock = new();
+    private sealed record LidBackupState(Guid SchemeGuid, uint AcValue, uint DcValue);
+    private static LidBackupState? _lidBackup;
+
+    public static object? ApplyLidCloseOverride(bool enable)
+    {
+        lock (LidLock)
+        {
+            if (enable)
+            {
+                if (_lidBackup != null)
+                {
+                    return new
+                    {
+                        schemeGuid = _lidBackup.SchemeGuid.ToString(),
+                        acValue = _lidBackup.AcValue,
+                        dcValue = _lidBackup.DcValue
+                    };
+                }
+
+                if (PowerGetActiveScheme(IntPtr.Zero, out IntPtr pScheme) != 0 || pScheme == IntPtr.Zero)
+                {
+                    return null;
+                }
+
+                Guid scheme = Marshal.PtrToStructure<Guid>(pScheme);
+                LocalFree(pScheme);
+
+                Guid sub = GuidSubButtons;
+                Guid lid = GuidLidAction;
+                if (PowerReadACValueIndex(IntPtr.Zero, ref scheme, ref sub, ref lid, out uint ac) != 0 ||
+                    PowerReadDCValueIndex(IntPtr.Zero, ref scheme, ref sub, ref lid, out uint dc) != 0)
+                {
+                    return null;
+                }
+
+                if (ac == 0 && dc == 0)
+                {
+                    return null;
+                }
+
+                if (PowerWriteACValueIndex(IntPtr.Zero, ref scheme, ref sub, ref lid, 0) == 0 &&
+                    PowerWriteDCValueIndex(IntPtr.Zero, ref scheme, ref sub, ref lid, 0) == 0 &&
+                    PowerSetActiveScheme(IntPtr.Zero, ref scheme) == 0)
+                {
+                    _lidBackup = new LidBackupState(scheme, ac, dc);
+                    return new
+                    {
+                        schemeGuid = scheme.ToString(),
+                        acValue = ac,
+                        dcValue = dc
+                    };
+                }
+
+                return null;
+            }
+            else
+            {
+                RestoreSavedLidAction();
+                return null;
+            }
+        }
+    }
+
+    public static void RestoreSavedLidAction()
+    {
+        lock (LidLock)
+        {
+            if (_lidBackup == null) return;
+            var backup = _lidBackup;
+            _lidBackup = null;
+            RestoreLidActionValues(backup.SchemeGuid, backup.AcValue, backup.DcValue);
+        }
+    }
+
+    public static bool RestoreLidActionValues(Guid schemeGuid, uint acValue, uint dcValue)
+    {
+        try
+        {
+            Guid sub = GuidSubButtons;
+            Guid lid = GuidLidAction;
+            uint wAc = PowerWriteACValueIndex(IntPtr.Zero, ref schemeGuid, ref sub, ref lid, acValue);
+            uint wDc = PowerWriteDCValueIndex(IntPtr.Zero, ref schemeGuid, ref sub, ref lid, dcValue);
+
+            if (PowerGetActiveScheme(IntPtr.Zero, out IntPtr pActive) == 0 && pActive != IntPtr.Zero)
+            {
+                Guid active = Marshal.PtrToStructure<Guid>(pActive);
+                LocalFree(pActive);
+                if (active == schemeGuid)
+                {
+                    PowerSetActiveScheme(IntPtr.Zero, ref schemeGuid);
+                }
+            }
+
+            return wAc == 0 && wDc == 0;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     public static object GetPowerStatus()
@@ -605,6 +773,19 @@ internal static class Win32
         {
             SetWindowLongPtr(hwnd, GWL_EXSTYLE, new IntPtr(nextExStyle));
         }
+
+        const int DWMWA_NCRENDERING_POLICY = 2;
+        const int DWMNCRP_DISABLED = 1;
+        const int DWMWA_WINDOW_CORNER_PREFERENCE = 33;
+        const int DWMWCP_DONOTROUND = 1;
+        const int DWMWA_BORDER_COLOR = 34;
+        int ncrp = DWMNCRP_DISABLED;
+        DwmSetWindowAttribute(hwnd, DWMWA_NCRENDERING_POLICY, ref ncrp, sizeof(int));
+        int corner = DWMWCP_DONOTROUND;
+        DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, ref corner, sizeof(int));
+        int borderNone = unchecked((int)0xFFFFFFFE);
+        DwmSetWindowAttribute(hwnd, DWMWA_BORDER_COLOR, ref borderNone, sizeof(int));
+
         return SetWindowPos(
             hwnd,
             IntPtr.Zero,

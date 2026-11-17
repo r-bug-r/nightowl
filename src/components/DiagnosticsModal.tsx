@@ -16,7 +16,7 @@ interface DiagnosticsModalProps {
   settings: NightowlSettings;
   onUpdateSettings: (patch: Partial<NightowlSettings>) => void;
   onSelectTheme: (theme: ThemePreset) => void;
-  onStartQuick: (hours: number) => void;
+  onStartQuick: (hours: number | null) => void;
   onStop: () => void;
   onFocusSession: (session: AgentSession) => void;
   onResetPosition: () => void;
@@ -49,6 +49,10 @@ export const DiagnosticsModal: React.FC<DiagnosticsModalProps> = ({
 }) => {
   useEffect(() => {
     document.title = "Nightowl Settings & Diagnostics";
+    document.documentElement.classList.add("is-diagnostics");
+    return () => {
+      document.documentElement.classList.remove("is-diagnostics");
+    };
   }, []);
 
   const order: CapsuleSection[] =
@@ -117,6 +121,7 @@ export const DiagnosticsModal: React.FC<DiagnosticsModalProps> = ({
         </div>
 
         <div className="diag-actions">
+          <button type="button" onClick={() => onStartQuick(null)}>Always Awake (∞)</button>
           <button type="button" onClick={() => onStartQuick(0.5)}>30 Mins</button>
           <button type="button" onClick={() => onStartQuick(2)}>2 Hours</button>
           <button type="button" onClick={() => onStartQuick(8)}>8 Hours</button>
@@ -169,6 +174,26 @@ export const DiagnosticsModal: React.FC<DiagnosticsModalProps> = ({
             onChange={(e) => onUpdateSettings({ keepDisplay: e.target.checked })}
           />
           <span>Keep screen lit during awake sessions</span>
+        </label>
+        <label className="diag-toggle">
+          <input
+            type="checkbox"
+            checked={settings.keepAwakeWithLidClosed !== false}
+            onChange={(e) => onUpdateSettings({ keepAwakeWithLidClosed: e.target.checked })}
+          />
+          <span>Keep PC awake when laptop lid is closed</span>
+        </label>
+        <label className="diag-toggle">
+          <input
+            type="checkbox"
+            checked={Boolean(settings.keepAwakeOnLaunch)}
+            onChange={(e) => {
+              const checked = e.target.checked;
+              onUpdateSettings({ keepAwakeOnLaunch: checked });
+              if (checked) onStartQuick(null);
+            }}
+          />
+          <span>Keep PC awake all the time on launch (remote control)</span>
         </label>
       </section>
 

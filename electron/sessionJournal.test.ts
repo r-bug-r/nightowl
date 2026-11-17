@@ -26,10 +26,12 @@ describe("SessionJournal", () => {
 
   it("detects uncleaned active session on startup and clears it", async () => {
     const journal = new SessionJournal(journalPath);
-    await journal.writeActive(Date.now() + 60_000, false);
+    const backup = { schemeGuid: "381b4222-f694-41f0-9685-ff5bb260df2e", acValue: 1, dcValue: 1 };
+    await journal.writeActive(Date.now() + 60_000, false, backup);
 
     const res = await journal.reconcileOnStartup();
     expect(res.recoveredFromCrash).toBe(true);
+    expect(res.previousRecord?.lidActionBackup).toEqual(backup);
 
     const secondPass = await journal.reconcileOnStartup();
     expect(secondPass.recoveredFromCrash).toBe(false);

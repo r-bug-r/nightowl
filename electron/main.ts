@@ -4,7 +4,7 @@ import path from "node:path";
 import { NativeBridge } from "./nativeBridge";
 import { SessionJournal } from "./sessionJournal";
 import { SessionScanner } from "./sessionScanner";
-import type { AgentSession, AwakeState, NightowlSettings, PowerStatus } from "./types";
+import type { AgentSession, AwakeState, LidActionBackup, NightowlSettings, PowerStatus } from "./types";
 
 const isDev = process.argv.includes("--dev");
 const DEV_URL = "http://127.0.0.1:5173";
@@ -22,6 +22,7 @@ let settings: NightowlSettings = {
   batteryThreshold: 10,
   batterySafeStop: true,
   keepDisplay: false,
+  keepAwakeWithLidClosed: true,
   autoAwakeForAgents: false,
   theme: "forest",
   capsuleScale: 1,
@@ -44,6 +45,7 @@ let endsAt: number | null = null;
 let autoAwakeActive = false;
 let recoveredFromCrash = false;
 let recoveryNote: string | null = null;
+let currentLidBackup: LidActionBackup | null = null;
 let sessions: AgentSession[] = [];
 
 // Anchor bottom-right corner of capsule window
@@ -114,9 +116,12 @@ function computeAwakeState(): AwakeState {
   const active = manualAwake || autoAwakeActive;
   return {
     active,
+    manualAwake,
     endsAt,
     remainingMs,
     keepDisplay: settings.keepDisplay,
+    keepAwakeWithLidClosed: settings.keepAwakeWithLidClosed !== false,
+    lidOverrideActive: Boolean(active && currentLidBackup),
     batterySafeStop: settings.batterySafeStop,
     autoAwakeForAgents: settings.autoAwakeForAgents,
     autoAwakeActive,
@@ -143,8 +148,13 @@ function broadcastState(): void {
 
 async function syncPowerAssertion(): Promise<void> {
   const active = manualAwake || autoAwakeActive;
+  const keepLidAwake = settings.keepAwakeWithLidClosed !== false;
   try {
-    await nativeBridge.setAwake(active, active && settings.keepDisplay);
+    const res = await nativeBridge.setAwake(active, active && settings.keepDisplay, active && keepLidAwake);
+    currentLidBackup = active && keepLidAwake ? (res?.lidBackup ?? null) : null;
+    if (active) {
+      await journal?.writeActive(endsAt, settings.keepDisplay, currentLidBackup);
+    }
   } catch {
     // ignore transient IPC error
   }
@@ -295,6 +305,22 @@ function refreshTrayMenu(): void {
   tray.setToolTip(`Nightowl for Windows · ${statusLabel}`);
 }
 
+let capsuleAllowFocus = false;
+
+function stripCapsuleChrome(): void {
+  if (!capsuleWindow || capsuleWindow.isDestroyed()) return;
+  try {
+    const handleBuf = capsuleWindow.getNativeWindowHandle();
+    if (handleBuf.length >= 8) {
+      void nativeBridge.stripWindowChrome(handleBuf.readBigInt64LE(0).toString());
+    } else if (handleBuf.length >= 4) {
+      void nativeBridge.stripWindowChrome(handleBuf.readInt32LE(0).toString());
+    }
+  } catch {
+    // ignore handle read error
+  }
+}
+
 function createCapsuleWindow(): void {
   if (anchorRight === 0 && anchorBottom === 0) {
     const def = defaultCapsuleAnchor();
@@ -349,21 +375,22 @@ function createCapsuleWindow(): void {
 
   capsuleWindow.once("ready-to-show", () => {
     if (capsuleWindow && !capsuleWindow.isDestroyed()) {
-      try {
-        const handleBuf = capsuleWindow.getNativeWindowHandle();
-        if (handleBuf.length >= 8) {
-          const hwnd = handleBuf.readBigInt64LE(0).toString();
-          void nativeBridge.stripWindowChrome(hwnd);
-        } else if (handleBuf.length >= 4) {
-          const hwnd = handleBuf.readInt32LE(0).toString();
-          void nativeBridge.stripWindowChrome(hwnd);
-        }
-      } catch {
-        // ignore handle read error
-      }
+      stripCapsuleChrome();
       capsuleWindow.showInactive();
       broadcastState();
     }
+  });
+
+  capsuleWindow.on("show", () => {
+    stripCapsuleChrome();
+  });
+
+  capsuleWindow.on("focus", () => {
+    if (!capsuleAllowFocus && capsuleWindow && !capsuleWindow.isDestroyed()) {
+      capsuleWindow.blur();
+      capsuleWindow.setFocusable(false);
+    }
+    stripCapsuleChrome();
   });
 
   capsuleWindow.on("closed", () => {
@@ -404,6 +431,15 @@ function openDiagnosticsWindow(): void {
 
   diagnosticsWindow.on("closed", () => {
     diagnosticsWindow = null;
+    if (capsuleWindow && !capsuleWindow.isDestroyed()) {
+      capsuleAllowFocus = false;
+      capsuleWindow.setFocusable(false);
+      if (capsuleWindow.isFocused()) {
+        capsuleWindow.blur();
+      }
+      stripCapsuleChrome();
+      capsuleWindow.showInactive();
+    }
   });
 }
 
@@ -511,10 +547,12 @@ function registerIpc(): void {
 
   ipcMain.on("nightowl:setCapsuleFocusable", (_ev, focusable: boolean) => {
     if (!capsuleWindow || capsuleWindow.isDestroyed()) return;
-    capsuleWindow.setFocusable(Boolean(focusable));
-    if (focusable) {
+    capsuleAllowFocus = Boolean(focusable);
+    capsuleWindow.setFocusable(capsuleAllowFocus);
+    if (capsuleAllowFocus) {
       capsuleWindow.focus();
     }
+    stripCapsuleChrome();
   });
 
   ipcMain.on("nightowl:resizeCapsule", () => {
@@ -572,10 +610,20 @@ app.whenReady().then(async () => {
   nativeBridge.start();
   const recovery = await journal.reconcileOnStartup();
   recoveredFromCrash = recovery.recoveredFromCrash;
+  if (recovery.previousRecord?.lidActionBackup) {
+    try {
+      await nativeBridge.restoreLidAction(recovery.previousRecord.lidActionBackup);
+    } catch {
+      // ignore restore failure
+    }
+  }
   if (recoveredFromCrash) {
     recoveryNote = "Cleared an unclosed session from a previous exit.";
   }
-  await nativeBridge.setAwake(false, false);
+  await nativeBridge.setAwake(false, false, false);
+  if (settings.keepAwakeOnLaunch) {
+    await startAwake(null);
+  }
 
   registerIpc();
   globalShortcut.register("CommandOrControl+Shift+O", () => {

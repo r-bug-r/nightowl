@@ -32,6 +32,19 @@ body,
   overflow: hidden;
 }
 
+html.is-diagnostics,
+html.is-diagnostics body,
+html.is-diagnostics #root,
+html:has(.diag-shell),
+html:has(.diag-shell) body,
+html:has(.diag-shell) #root {
+  height: 100%;
+  background: #050d0a;
+  overflow-x: hidden;
+  overflow-y: auto;
+  user-select: text;
+}
+
 .tray-stage {
   position: fixed;
   right: 0;

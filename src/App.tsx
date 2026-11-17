@@ -30,6 +30,7 @@ const DEFAULT_SETTINGS: NightowlSettings = {
   batteryThreshold: 10,
   batterySafeStop: true,
   keepDisplay: false,
+  keepAwakeWithLidClosed: true,
   autoAwakeForAgents: false,
   theme: "forest",
   capsuleOrder: ["agents", "owl", "time"],
@@ -253,7 +254,7 @@ export const App: React.FC = () => {
     setTimerOpen(false);
     setMenuOpen(false);
     setHoveredControl(null);
-    if (awake.active) {
+    if (awake.active && awake.manualAwake !== false) {
       const next = await window.nightowl?.stopAwake();
       if (next) setAwake(next);
     } else {
@@ -442,7 +443,7 @@ export const App: React.FC = () => {
           if (next) setSettings(next);
         }}
         onStartQuick={async (hrs) => {
-          const next = await window.nightowl?.startAwake(hrs * 3600_000);
+          const next = await window.nightowl?.startAwake(hrs === null ? null : hrs * 3600_000);
           if (next) setAwake(next);
         }}
         onStop={async () => {
@@ -666,6 +667,7 @@ export const App: React.FC = () => {
                 { label: "30m", mins: 30 },
                 { label: "2h", mins: 120 },
                 { label: "8h", mins: 480 },
+                { label: "∞", mins: null },
               ].map((preset) => (
                 <button
                   key={preset.label}
@@ -675,7 +677,7 @@ export const App: React.FC = () => {
                     setTimerOpen(false);
                     setHoveredControl(null);
                     void window.nightowl
-                      ?.startAwake(preset.mins * 60_000)
+                      ?.startAwake(preset.mins === null ? null : preset.mins * 60_000)
                       .then((next) => next && setAwake(next));
                   }}
                 >
@@ -736,10 +738,12 @@ export const App: React.FC = () => {
             style={floatingStyle}
           >
             {hoveredControl === "owl" &&
-              (awake.active ? "Click to allow sleep · Ctrl+Shift+O" : "Click to stay awake · Ctrl+Shift+O")}
+              (awake.active && awake.manualAwake !== false
+                ? "Click to allow sleep · Ctrl+Shift+O"
+                : "Click to stay awake always · Ctrl+Shift+O")}
             {hoveredControl === "countdown" &&
               (awake.autoAwakeActive && !awake.endsAt
-                ? "Auto-awake · Agent is thinking"
+                ? "Auto-awake · Click to lock Always Awake"
                 : "Click to add +30m")}
             {hoveredControl === "screen" &&
               (settings.keepDisplay ? "Screen: Stays lit" : "Screen: Turns off")}
@@ -793,6 +797,18 @@ export const App: React.FC = () => {
           >
             <span>Keep screen lit</span>
             <span className="menu-check">{settings.keepDisplay ? "On" : "Off"}</span>
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              void window.nightowl?.updateSettings({
+                keepAwakeWithLidClosed: settings.keepAwakeWithLidClosed === false,
+              });
+            }}
+          >
+            <span>Keep awake with lid closed</span>
+            <span className="menu-check">{settings.keepAwakeWithLidClosed !== false ? "On" : "Off"}</span>
           </button>
           <div className="tray-menu-sep" />
           <div className="tray-theme-row" role="group" aria-label="Theme preset">
@@ -1088,7 +1104,13 @@ export const App: React.FC = () => {
                       setHoveredControl("countdown");
                     }}
                     onMouseLeave={() => scheduleClearHoverTargets()}
-                    onClick={handleAddTime}
+                    onClick={() => {
+                      if (awake.autoAwakeActive && !awake.endsAt) {
+                        void window.nightowl?.startAwake(null).then((next) => next && setAwake(next));
+                      } else {
+                        void handleAddTime();
+                      }
+                    }}
                   >
                     {awake.autoAwakeActive && !awake.endsAt ? (
                       <>

@@ -54,11 +54,20 @@ export interface PowerStatus {
   batterySaver: boolean;
 }
 
+export interface LidActionBackup {
+  schemeGuid: string;
+  acValue: number;
+  dcValue: number;
+}
+
 export interface AwakeState {
   active: boolean;
+  manualAwake?: boolean;
   endsAt: number | null;
   remainingMs: number;
   keepDisplay: boolean;
+  keepAwakeWithLidClosed?: boolean;
+  lidOverrideActive?: boolean;
   batterySafeStop: boolean;
   autoAwakeForAgents: boolean;
   autoAwakeActive: boolean;
@@ -77,6 +86,8 @@ export interface NightowlSettings {
   batteryThreshold: number;
   batterySafeStop: boolean;
   keepDisplay: boolean;
+  keepAwakeWithLidClosed?: boolean;
+  keepAwakeOnLaunch?: boolean;
   autoAwakeForAgents: boolean;
   theme: ThemePreset;
   capsuleScale?: number;
