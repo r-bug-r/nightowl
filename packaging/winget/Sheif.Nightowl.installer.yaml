@@ -14,6 +14,6 @@ UpgradeBehavior: install
 Installers:
   - Architecture: x64
     InstallerUrl: https://github.com/r-bug-r/nightowl/releases/download/v0.2.0/Nightowl.Setup.0.2.0.exe
-    InstallerSha256: REPLACE_WITH_RELEASE_SHA256
+    InstallerSha256: E41167F3B51B533BA1B2501EFA68BB1B34CE542C82F245D58F636BBB466AE8F5
 ManifestType: installer
 ManifestVersion: 1.6.0

@@ -2,7 +2,7 @@
 
 Once the public `v0.2.0` GitHub Release is published on `r-bug-r/nightowl`:
 
-1. Copy the exact SHA-256 hash from `SHA256SUMS.txt` into `Sheif.Nightowl.installer.yaml` (replacing `REPLACE_WITH_RELEASE_SHA256`).
+1. `Sheif.Nightowl.installer.yaml` is populated with the `v0.2.0` SHA-256 digest from `SHA256SUMS.txt`. For future versions, copy the new hash from `SHA256SUMS.txt`.
 2. Validate the manifests locally:
 
 ```powershell
