@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { AgentSession, AwakeState, NightowlSettings } from "./types";
+import type { AgentSession, AwakeState, NightowlSettings, UpdateCheckResult } from "./types";
 
 export interface NightowlApi {
   getState: () => Promise<{ awake: AwakeState; sessions: AgentSession[]; settings: NightowlSettings }>;
@@ -12,6 +12,8 @@ export interface NightowlApi {
     tabTitle?: string,
     sessionId?: string
   ) => Promise<{ focused: boolean; tabSelected?: boolean; reason?: string }>;
+  checkForUpdates: () => Promise<UpdateCheckResult>;
+  openExternal: (url: string) => Promise<boolean>;
   resizeCapsule: (width: number, height: number) => void;
   setIgnoreMouse: (ignore: boolean) => void;
   setCapsuleFocusable: (focusable: boolean) => void;
@@ -32,6 +34,8 @@ const api: NightowlApi = {
   updateSettings: (patch) => ipcRenderer.invoke("nightowl:updateSettings", patch),
   focusSession: (hwnd, tabTitle, sessionId) =>
     ipcRenderer.invoke("nightowl:focusSession", hwnd, tabTitle, sessionId),
+  checkForUpdates: () => ipcRenderer.invoke("nightowl:checkForUpdates"),
+  openExternal: (url) => ipcRenderer.invoke("nightowl:openExternal", url),
   resizeCapsule: (width, height) => ipcRenderer.send("nightowl:resizeCapsule", { width, height }),
   setIgnoreMouse: (ignore) => ipcRenderer.send("nightowl:setIgnoreMouse", ignore),
   setCapsuleFocusable: (focusable) => ipcRenderer.send("nightowl:setCapsuleFocusable", focusable),

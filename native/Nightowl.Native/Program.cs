@@ -486,13 +486,13 @@ internal static class Win32
                     return null;
                 }
 
-                if (ac == 0 && dc == 0)
+                // Only override AC (plugged-in) lid action so a battery laptop closed in a bag still sleeps safely.
+                if (ac == 0)
                 {
                     return null;
                 }
 
                 if (PowerWriteACValueIndex(IntPtr.Zero, ref scheme, ref sub, ref lid, 0) == 0 &&
-                    PowerWriteDCValueIndex(IntPtr.Zero, ref scheme, ref sub, ref lid, 0) == 0 &&
                     PowerSetActiveScheme(IntPtr.Zero, ref scheme) == 0)
                 {
                     _lidBackup = new LidBackupState(scheme, ac, dc);

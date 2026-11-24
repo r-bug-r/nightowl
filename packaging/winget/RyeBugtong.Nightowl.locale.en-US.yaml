@@ -1,0 +1,28 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.6.0.schema.json
+
+PackageIdentifier: RyeBugtong.Nightowl
+PackageVersion: 0.2.0
+PackageLocale: en-US
+Publisher: Ryekarlo Bugtong
+PublisherUrl: https://nightowl.sheif.org
+PublisherSupportUrl: https://github.com/r-bug-r/nightowl/issues
+Author: Ryekarlo Bugtong
+PackageName: Nightowl
+PackageUrl: https://nightowl.sheif.org
+License: MIT
+LicenseUrl: https://github.com/r-bug-r/nightowl/blob/main/LICENSE
+Copyright: Copyright (c) 2026 Ryekarlo Bugtong
+ShortDescription: Keep Windows awake from the system tray and monitor Claude Code, Codex, and Antigravity sessions.
+Description: Nightowl is a lightweight Windows 10/11 system tray utility that keeps your PC awake for overnight AI coding runs, builds, and large downloads while letting your monitor turn off safely. Includes a hover-expanding HUD for live Claude Code, Codex, and Antigravity sessions with 1-click focus, battery safety cutoffs, and crash-safe recovery.
+Moniker: nightowl
+Tags:
+  - keep-awake
+  - system-tray
+  - utility
+  - developer-tools
+  - claude-code
+  - codex
+  - antigravity
+ReleaseNotesUrl: https://github.com/r-bug-r/nightowl/releases/tag/v0.2.0
+ManifestType: defaultLocale
+ManifestVersion: 1.6.0

@@ -1,7 +1,9 @@
 appId: com.rbugr.nightowl
 productName: Nightowl
+copyright: Copyright (c) 2026 Ryekarlo Bugtong
 directories:
   output: release
+  buildResources: build
 files:
   - dist/**/*
   - dist-electron/**/*
@@ -10,6 +12,8 @@ extraResources:
   - from: native/bin
     to: native
 win:
+  icon: build/icon.ico
+  artifactName: Nightowl.Setup.${version}.${ext}
   target:
     - target: nsis
       arch:
@@ -20,3 +24,11 @@ nsis:
   perMachine: false
   createDesktopShortcut: true
   createStartMenuShortcut: true
+  installerIcon: build/icon.ico
+  uninstallerIcon: build/icon.ico
+  installerHeaderIcon: build/icon.ico
+  shortcutName: Nightowl
+publish:
+  provider: github
+  owner: r-bug-r
+  repo: nightowl

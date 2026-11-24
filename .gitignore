@@ -2,6 +2,7 @@ node_modules/
 dist/
 dist-electron/
 release/
+native/bin/
 native/Nightowl.Native/bin/
 native/Nightowl.Native/obj/
 *.log

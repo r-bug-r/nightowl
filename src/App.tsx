@@ -30,7 +30,9 @@ const DEFAULT_SETTINGS: NightowlSettings = {
   batteryThreshold: 10,
   batterySafeStop: true,
   keepDisplay: false,
-  keepAwakeWithLidClosed: true,
+  keepAwakeWithLidClosed: false,
+  keepAwakeOnLaunch: false,
+  openAtLogin: false,
   autoAwakeForAgents: false,
   theme: "forest",
   capsuleOrder: ["agents", "owl", "time"],
@@ -783,7 +785,7 @@ export const App: React.FC = () => {
               });
             }}
           >
-            <span>Battery safety (&lt;10%)</span>
+            <span>Battery safety (&lt;{settings.batteryThreshold}%)</span>
             <span className="menu-check">{settings.batterySafeStop ? "On" : "Off"}</span>
           </button>
           <button
@@ -803,12 +805,24 @@ export const App: React.FC = () => {
             role="menuitem"
             onClick={() => {
               void window.nightowl?.updateSettings({
-                keepAwakeWithLidClosed: settings.keepAwakeWithLidClosed === false,
+                keepAwakeWithLidClosed: !Boolean(settings.keepAwakeWithLidClosed),
               });
             }}
           >
-            <span>Keep awake with lid closed</span>
-            <span className="menu-check">{settings.keepAwakeWithLidClosed !== false ? "On" : "Off"}</span>
+            <span>Lid-closed awake (AC)</span>
+            <span className="menu-check">{settings.keepAwakeWithLidClosed ? "On" : "Off"}</span>
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              void window.nightowl?.updateSettings({
+                openAtLogin: !Boolean(settings.openAtLogin),
+              });
+            }}
+          >
+            <span>Start with Windows</span>
+            <span className="menu-check">{settings.openAtLogin ? "On" : "Off"}</span>
           </button>
           <div className="tray-menu-sep" />
           <div className="tray-theme-row" role="group" aria-label="Theme preset">

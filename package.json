@@ -1,11 +1,32 @@
 {
   "name": "nightowl",
-  "version": "0.1.0",
-  "private": true,
+  "version": "0.2.0",
+  "private": false,
+  "license": "MIT",
+  "author": "Ryekarlo Bugtong",
+  "homepage": "https://nightowl.sheif.org",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/r-bug-r/nightowl.git"
+  },
+  "bugs": {
+    "url": "https://github.com/r-bug-r/nightowl/issues"
+  },
   "description": "Nightowl for Windows: keep your PC awake from the system tray and monitor Claude Code, Codex, and Antigravity sessions.",
+  "keywords": [
+    "windows",
+    "keep-awake",
+    "system-tray",
+    "claude-code",
+    "codex",
+    "antigravity",
+    "electron",
+    "win32"
+  ],
   "main": "dist-electron/main.js",
   "scripts": {
-    "build:native": "dotnet build native/Nightowl.Native/Nightowl.Native.csproj -c Release -o native/bin",
+    "build:native": "node scripts/build-native.mjs",
+    "build:native:release": "node scripts/build-native.mjs --self-contained",
     "build:electron": "tsc -p tsconfig.electron.json",
     "build:ui": "vite build",
     "build": "npm run build:native && npm run build:electron && npm run build:ui",
@@ -14,7 +35,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.electron.json",
-    "package:win": "npm run build && electron-builder --win nsis --x64 --publish never"
+    "package:win": "npm run build:native:release && npm run build:electron && npm run build:ui && electron-builder --win nsis --x64 --publish never"
   },
   "dependencies": {
     "react": "^19.1.0",
@@ -24,7 +45,7 @@
     "@types/node": "^22.15.0",
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",
-    "@vitejs/plugin-react": "^4.4.1",
+    "@vitejs/plugin-react": "^4.6.0",
     "concurrently": "^9.1.2",
     "electron": "^35.2.1",
     "electron-builder": "^26.0.12",
