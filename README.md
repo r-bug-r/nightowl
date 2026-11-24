@@ -32,7 +32,7 @@ Get-FileHash .\Nightowl.Setup.0.2.0.exe -Algorithm SHA256
 ### Option 2: Winget (after manifest approval)
 
 ```powershell
-winget install RyeBugtong.Nightowl
+winget install Sheif.Nightowl
 ```
 
 ## Honest Limitations

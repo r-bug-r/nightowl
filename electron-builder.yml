@@ -1,6 +1,6 @@
-appId: com.rbugr.nightowl
+appId: org.sheif.nightowl
 productName: Nightowl
-copyright: Copyright (c) 2026 Ryekarlo Bugtong
+copyright: Copyright (c) 2026 Sheif
 directories:
   output: release
   buildResources: build
