@@ -37,7 +37,20 @@ export interface AwakeState {
   autoAwakeActive: boolean;
   recoveredFromCrash: boolean;
   recoveryNote: string | null;
+  nativeHealthy?: boolean;
+  nativeError?: string | null;
+  shortcutRegistered?: boolean;
+  appVersion?: string;
   power: PowerStatus;
+}
+
+export interface UpdateCheckResult {
+  status: "update-available" | "up-to-date" | "error";
+  currentVersion: string;
+  latestVersion: string | null;
+  releaseUrl: string;
+  checkedAt: number;
+  error?: string;
 }
 
 export type ThemePreset = "forest" | "minimal-dark" | "minimal-light";
@@ -52,6 +65,7 @@ export interface NightowlSettings {
   keepDisplay: boolean;
   keepAwakeWithLidClosed?: boolean;
   keepAwakeOnLaunch?: boolean;
+  openAtLogin?: boolean;
   autoAwakeForAgents: boolean;
   theme: ThemePreset;
   capsuleScale?: number;
@@ -72,6 +86,8 @@ export interface NightowlApi {
     tabTitle?: string,
     sessionId?: string
   ) => Promise<{ focused: boolean; tabSelected?: boolean; reason?: string }>;
+  checkForUpdates: () => Promise<UpdateCheckResult>;
+  openExternal: (url: string) => Promise<boolean>;
   resizeCapsule: (width: number, height: number) => void;
   setIgnoreMouse: (ignore: boolean) => void;
   setCapsuleFocusable: (focusable: boolean) => void;

@@ -73,7 +73,20 @@ export interface AwakeState {
   autoAwakeActive: boolean;
   recoveredFromCrash: boolean;
   recoveryNote: string | null;
+  nativeHealthy?: boolean;
+  nativeError?: string | null;
+  shortcutRegistered?: boolean;
+  appVersion?: string;
   power: PowerStatus;
+}
+
+export interface UpdateCheckResult {
+  status: "update-available" | "up-to-date" | "error";
+  currentVersion: string;
+  latestVersion: string | null;
+  releaseUrl: string;
+  checkedAt: number;
+  error?: string;
 }
 
 export type ThemePreset = "forest" | "minimal-dark" | "minimal-light";
@@ -88,6 +101,7 @@ export interface NightowlSettings {
   keepDisplay: boolean;
   keepAwakeWithLidClosed?: boolean;
   keepAwakeOnLaunch?: boolean;
+  openAtLogin?: boolean;
   autoAwakeForAgents: boolean;
   theme: ThemePreset;
   capsuleScale?: number;

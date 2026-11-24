@@ -1,10 +1,12 @@
-import { app, BrowserWindow, globalShortcut, ipcMain, Menu, nativeImage, screen, Tray } from "electron";
+import { app, BrowserWindow, globalShortcut, ipcMain, Menu, nativeImage, screen, shell, Tray } from "electron";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { NativeBridge } from "./nativeBridge";
 import { SessionJournal } from "./sessionJournal";
 import { SessionScanner } from "./sessionScanner";
+import { DEFAULT_SETTINGS, sanitizeSettingsPatch } from "./settings";
 import type { AgentSession, AwakeState, LidActionBackup, NightowlSettings, PowerStatus } from "./types";
+import { checkForUpdates, isAllowedExternalUrl } from "./updateChecker";
 
 const isDev = process.argv.includes("--dev");
 const DEV_URL = "http://127.0.0.1:5173";
@@ -18,19 +20,7 @@ let tray: Tray | null = null;
 let pollTimer: NodeJS.Timeout | null = null;
 let journal: SessionJournal;
 
-let settings: NightowlSettings = {
-  batteryThreshold: 10,
-  batterySafeStop: true,
-  keepDisplay: false,
-  keepAwakeWithLidClosed: true,
-  autoAwakeForAgents: false,
-  theme: "forest",
-  capsuleScale: 1,
-  capsuleOrder: ["agents", "owl", "time"],
-  hoverAnimation: "slow",
-  clockFormat24h: false,
-  showClock: true,
-};
+let settings: NightowlSettings = { ...DEFAULT_SETTINGS };
 
 let powerStatus: PowerStatus = {
   acLineOnline: true,
@@ -45,6 +35,9 @@ let endsAt: number | null = null;
 let autoAwakeActive = false;
 let recoveredFromCrash = false;
 let recoveryNote: string | null = null;
+let nativeHealthy = true;
+let nativeError: string | null = null;
+let shortcutRegistered = false;
 let currentLidBackup: LidActionBackup | null = null;
 let sessions: AgentSession[] = [];
 
@@ -72,7 +65,7 @@ async function loadPersistedConfig(): Promise<void> {
     const raw = await fs.readFile(settingsFilePath, "utf8");
     const parsed = JSON.parse(raw) as PersistedConfig;
     if (parsed.settings && typeof parsed.settings === "object") {
-      settings = { ...settings, ...parsed.settings };
+      settings = { ...settings, ...sanitizeSettingsPatch(parsed.settings) };
     }
     if (
       typeof parsed.anchorRight === "number" &&
@@ -110,6 +103,15 @@ function schedulePersistConfig(): void {
   }, 350);
 }
 
+function applyLoginItemSetting(openAtLogin: boolean): void {
+  if (!app.isPackaged) return;
+  try {
+    app.setLoginItemSettings({ openAtLogin });
+  } catch {
+    // ignore OS policy restriction on login items
+  }
+}
+
 function computeAwakeState(): AwakeState {
   const now = Date.now();
   const remainingMs = endsAt ? Math.max(0, endsAt - now) : 0;
@@ -120,13 +122,17 @@ function computeAwakeState(): AwakeState {
     endsAt,
     remainingMs,
     keepDisplay: settings.keepDisplay,
-    keepAwakeWithLidClosed: settings.keepAwakeWithLidClosed !== false,
+    keepAwakeWithLidClosed: Boolean(settings.keepAwakeWithLidClosed),
     lidOverrideActive: Boolean(active && currentLidBackup),
     batterySafeStop: settings.batterySafeStop,
     autoAwakeForAgents: settings.autoAwakeForAgents,
     autoAwakeActive,
     recoveredFromCrash,
     recoveryNote,
+    nativeHealthy,
+    nativeError,
+    shortcutRegistered,
+    appVersion: app.getVersion(),
     power: powerStatus,
   };
 }
@@ -148,15 +154,18 @@ function broadcastState(): void {
 
 async function syncPowerAssertion(): Promise<void> {
   const active = manualAwake || autoAwakeActive;
-  const keepLidAwake = settings.keepAwakeWithLidClosed !== false;
+  const keepLidAwake = Boolean(settings.keepAwakeWithLidClosed);
   try {
     const res = await nativeBridge.setAwake(active, active && settings.keepDisplay, active && keepLidAwake);
+    nativeHealthy = true;
+    nativeError = null;
     currentLidBackup = active && keepLidAwake ? (res?.lidBackup ?? null) : null;
     if (active) {
       await journal?.writeActive(endsAt, settings.keepDisplay, currentLidBackup);
     }
-  } catch {
-    // ignore transient IPC error
+  } catch (err) {
+    nativeHealthy = false;
+    nativeError = err instanceof Error ? err.message : "Native power helper did not respond.";
   }
 }
 
@@ -270,13 +279,36 @@ function refreshTrayMenu(): void {
     : "Normal sleep active";
 
   const menu = Menu.buildFromTemplate([
-    { label: `Nightowl: ${statusLabel}`, enabled: false },
+    { label: `Nightowl v${app.getVersion()}: ${statusLabel}`, enabled: false },
     { label: `Open agents: ${sessions.length}`, enabled: false },
     { type: "separator" },
+    { label: "Always awake (until stopped)", click: () => void startAwake(null) },
     { label: "Keep awake for 30 mins", click: () => void startAwake(30 * 60_000) },
     { label: "Keep awake for 2 hours", click: () => void startAwake(2 * 3600_000) },
     { label: "Keep awake for 8 hours", click: () => void startAwake(8 * 3600_000) },
     { label: "End awake session", enabled: awake.active, click: () => void stopAwake() },
+    { type: "separator" },
+    {
+      label: "Auto-awake while agents think",
+      type: "checkbox",
+      checked: settings.autoAwakeForAgents,
+      click: (item) => {
+        settings = { ...settings, autoAwakeForAgents: item.checked };
+        schedulePersistConfig();
+        void syncPowerAssertion().then(() => broadcastState());
+      },
+    },
+    {
+      label: "Start with Windows",
+      type: "checkbox",
+      checked: Boolean(settings.openAtLogin),
+      click: (item) => {
+        settings = { ...settings, openAtLogin: item.checked };
+        applyLoginItemSetting(item.checked);
+        schedulePersistConfig();
+        broadcastState();
+      },
+    },
     { type: "separator" },
     {
       label: "Show / Hide Tray Capsule",
@@ -407,10 +439,11 @@ function openDiagnosticsWindow(): void {
 
   diagnosticsWindow = new BrowserWindow({
     width: 620,
-    height: 700,
+    height: 740,
     minWidth: 520,
-    minHeight: 540,
+    minHeight: 560,
     title: "Nightowl Settings & Diagnostics",
+    icon: createOwlTrayImage(),
     backgroundColor: "#050d0a",
     autoHideMenuBar: true,
     resizable: true,
@@ -455,6 +488,8 @@ async function pollLoop(): Promise<void> {
     ]);
 
     powerStatus = nextPower;
+    nativeHealthy = true;
+    nativeError = null;
     sessions = await scanner.scan(snapshot);
 
     const now = Date.now();
@@ -486,8 +521,10 @@ async function pollLoop(): Promise<void> {
     }
 
     broadcastState();
-  } catch {
-    // keep polling resilient
+  } catch (err) {
+    nativeHealthy = false;
+    nativeError = err instanceof Error ? err.message : "Native helper poll failed.";
+    broadcastState();
   } finally {
     pollInFlight = false;
   }
@@ -509,30 +546,25 @@ function registerIpc(): void {
   ipcMain.handle("nightowl:stopAwake", () => stopAwake());
 
   ipcMain.handle("nightowl:updateSettings", async (_ev, patch: Partial<NightowlSettings>) => {
-    const nextPatch = { ...patch };
-    if (typeof nextPatch.capsuleScale === "number" && Number.isFinite(nextPatch.capsuleScale)) {
-      nextPatch.capsuleScale = Math.max(0.75, Math.min(1.6, Math.round(nextPatch.capsuleScale * 100) / 100));
-    }
-    if (typeof nextPatch.batteryThreshold === "number" && Number.isFinite(nextPatch.batteryThreshold)) {
-      nextPatch.batteryThreshold = Math.max(5, Math.min(50, Math.round(nextPatch.batteryThreshold)));
-    }
-    if (Array.isArray(nextPatch.capsuleOrder)) {
-      const valid = ["agents", "owl", "time"] as const;
-      const filtered = nextPatch.capsuleOrder.filter((s): s is (typeof valid)[number] =>
-        valid.includes(s as (typeof valid)[number])
-      );
-      const unique = Array.from(new Set(filtered));
-      if (unique.length === 3) {
-        nextPatch.capsuleOrder = unique;
-      } else {
-        delete nextPatch.capsuleOrder;
-      }
-    }
+    const nextPatch = sanitizeSettingsPatch(patch ?? {});
     settings = { ...settings, ...nextPatch };
+    if (typeof nextPatch.openAtLogin === "boolean") {
+      applyLoginItemSetting(nextPatch.openAtLogin);
+    }
     schedulePersistConfig();
     await syncPowerAssertion();
     broadcastState();
     return settings;
+  });
+
+  ipcMain.handle("nightowl:checkForUpdates", () => checkForUpdates(app.getVersion()));
+
+  ipcMain.handle("nightowl:openExternal", async (_ev, rawUrl: string) => {
+    if (typeof rawUrl !== "string" || !isAllowedExternalUrl(rawUrl)) {
+      return false;
+    }
+    await shell.openExternal(rawUrl);
+    return true;
   });
 
   ipcMain.handle(
@@ -606,6 +638,14 @@ app.whenReady().then(async () => {
   journal = new SessionJournal(path.join(userDataDir, "session.json"));
 
   await loadPersistedConfig();
+  if (app.isPackaged) {
+    const loginState = app.getLoginItemSettings();
+    if (typeof settings.openAtLogin === "boolean") {
+      applyLoginItemSetting(settings.openAtLogin);
+    } else {
+      settings.openAtLogin = Boolean(loginState.openAtLogin);
+    }
+  }
 
   nativeBridge.start();
   const recovery = await journal.reconcileOnStartup();
@@ -620,13 +660,20 @@ app.whenReady().then(async () => {
   if (recoveredFromCrash) {
     recoveryNote = "Cleared an unclosed session from a previous exit.";
   }
-  await nativeBridge.setAwake(false, false, false);
+  try {
+    await nativeBridge.setAwake(false, false, false);
+    nativeHealthy = true;
+    nativeError = null;
+  } catch (err) {
+    nativeHealthy = false;
+    nativeError = err instanceof Error ? err.message : "Native power helper failed to initialize.";
+  }
   if (settings.keepAwakeOnLaunch) {
     await startAwake(null);
   }
 
   registerIpc();
-  globalShortcut.register("CommandOrControl+Shift+O", () => {
+  shortcutRegistered = globalShortcut.register("CommandOrControl+Shift+O", () => {
     if (manualAwake || autoAwakeActive) {
       void stopAwake();
     } else {

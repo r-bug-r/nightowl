@@ -1,4 +1,4 @@
-import React, { useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import type {
   AgentSession,
   AwakeState,
@@ -6,6 +6,7 @@ import type {
   HoverAnimationSpeed,
   NightowlSettings,
   ThemePreset,
+  UpdateCheckResult,
 } from "../types";
 import { HarnessIcon, harnessDisplayName } from "./HarnessIcons";
 import { OwlIcon } from "./OwlIcon";
@@ -36,6 +37,34 @@ function formatRemaining(ms: number): string {
   return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
 
+interface SwitchRowProps {
+  label: string;
+  hint?: string;
+  checked: boolean;
+  disabled?: boolean;
+  onChange: (next: boolean) => void;
+}
+
+const SwitchRow: React.FC<SwitchRowProps> = ({ label, hint, checked, disabled, onChange }) => (
+  <div className={`diag-switch-row ${disabled ? "is-disabled" : ""}`}>
+    <div className="diag-switch-copy">
+      <span className="diag-switch-label">{label}</span>
+      {hint && <span className="diag-switch-hint">{hint}</span>}
+    </div>
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
+      disabled={disabled}
+      className={`diag-switch ${checked ? "is-on" : ""}`}
+      onClick={() => !disabled && onChange(!checked)}
+    >
+      <span className="diag-switch-thumb" aria-hidden="true" />
+    </button>
+  </div>
+);
+
 export const DiagnosticsModal: React.FC<DiagnosticsModalProps> = ({
   awake,
   sessions,
@@ -47,6 +76,10 @@ export const DiagnosticsModal: React.FC<DiagnosticsModalProps> = ({
   onFocusSession,
   onResetPosition,
 }) => {
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
+  const [updateResult, setUpdateResult] = useState<UpdateCheckResult | null>(null);
+  const [copiedDiag, setCopiedDiag] = useState(false);
+
   useEffect(() => {
     document.title = "Nightowl Settings & Diagnostics";
     document.documentElement.classList.add("is-diagnostics");
@@ -68,20 +101,67 @@ export const DiagnosticsModal: React.FC<DiagnosticsModalProps> = ({
     onUpdateSettings({ capsuleOrder: next });
   };
 
+  const handleCheckUpdates = async () => {
+    setCheckingUpdate(true);
+    try {
+      const res = await window.nightowl?.checkForUpdates();
+      if (res) setUpdateResult(res);
+    } finally {
+      setCheckingUpdate(false);
+    }
+  };
+
+  const handleCopyDiagnostics = async () => {
+    const summary = {
+      version: awake.appVersion ?? "0.2.0",
+      active: awake.active,
+      autoAwakeActive: awake.autoAwakeActive,
+      lidOverrideActive: Boolean(awake.lidOverrideActive),
+      nativeHealthy: awake.nativeHealthy !== false,
+      nativeError: awake.nativeError ?? null,
+      shortcutRegistered: awake.shortcutRegistered !== false,
+      recoveredFromCrash: awake.recoveredFromCrash,
+      power: awake.power,
+      detectedSessions: sessions.map((s) => ({ harness: s.harness, source: s.source, state: s.state })),
+    };
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(summary, null, 2));
+      setCopiedDiag(true);
+      setTimeout(() => setCopiedDiag(false), 1800);
+    } catch {
+      // clipboard unavailable
+    }
+  };
+
   const animSpeed: HoverAnimationSpeed = settings.hoverAnimation ?? "slow";
   const scale = settings.capsuleScale ?? 1;
   const showClock = settings.showClock !== false;
   const clock24 = Boolean(settings.clockFormat24h);
+  const versionLabel = `v${awake.appVersion ?? "0.2.0"}`;
+
   return (
-    <div className="diag-shell">
+    <div className="diag-shell" data-theme={settings.theme || "forest"}>
       <header className="diag-header">
         <div className="diag-brand">
           <span className="owl-ring-sm">
-            <OwlIcon awake={awake.active} size={20} />
+            <OwlIcon awake={awake.active} size={20} theme={settings.theme} />
           </span>
           <div>
-            <h1>Nightowl for Windows</h1>
-            <p className="diag-sub">System tray awake utility &amp; agent monitor</p>
+            <div className="diag-title-row">
+              <h1>Nightowl</h1>
+              <span className="diag-meta-chip">{versionLabel}</span>
+              <span
+                className="diag-meta-chip"
+                title={
+                  awake.shortcutRegistered === false
+                    ? "Global shortcut Ctrl+Shift+O is currently used by another app"
+                    : "Global toggle hotkey"
+                }
+              >
+                {awake.shortcutRegistered === false ? "Hotkey busy" : "Ctrl+Shift+O"}
+              </span>
+            </div>
+            <p className="diag-sub">Windows tray keep-awake &amp; agent HUD</p>
           </div>
         </div>
         <span className={`diag-pill ${awake.active ? "is-awake" : ""}`}>
@@ -89,10 +169,30 @@ export const DiagnosticsModal: React.FC<DiagnosticsModalProps> = ({
         </span>
       </header>
 
+      {awake.nativeHealthy === false && (
+        <div className="diag-banner is-error" role="alert">
+          <strong>Native power helper issue:</strong> {awake.nativeError || "Win32 helper unavailable."}
+        </div>
+      )}
+
+      {awake.recoveryNote && (
+        <div className="diag-banner is-info" role="status">
+          {awake.recoveryNote}
+        </div>
+      )}
+
       <section className="diag-card">
         <div className="diag-card-bar">
           <span>awake-session</span>
-          <span>{awake.active && awake.endsAt ? formatRemaining(awake.remainingMs) : awake.active ? "until stopped" : "idle"}</span>
+          <span>
+            {awake.active && awake.endsAt
+              ? formatRemaining(awake.remainingMs)
+              : awake.active
+                ? awake.autoAwakeActive && !awake.manualAwake
+                  ? "auto-awake (agent)"
+                  : "until stopped"
+                : "idle"}
+          </span>
         </div>
         <div className="diag-grid">
           <div className="diag-stat">
@@ -109,9 +209,15 @@ export const DiagnosticsModal: React.FC<DiagnosticsModalProps> = ({
             </span>
           </div>
           <div className="diag-stat">
-            <span className="diag-k">RECOVERY</span>
+            <span className="diag-k">HELPER &amp; RECOVERY</span>
             <span className="diag-v">
-              {awake.recoveredFromCrash ? "Cleared prior session" : "Clean state"}
+              {awake.nativeHealthy === false
+                ? "Helper offline"
+                : awake.lidOverrideActive
+                  ? "AC lid override active"
+                  : awake.recoveredFromCrash
+                    ? "Cleared prior session"
+                    : "Healthy · Clean state"}
             </span>
           </div>
           <div className="diag-stat">
@@ -136,21 +242,19 @@ export const DiagnosticsModal: React.FC<DiagnosticsModalProps> = ({
           <span>safety &amp; behavior</span>
           <span>preferences</span>
         </div>
-        <label className="diag-toggle">
-          <input
-            type="checkbox"
-            checked={settings.batterySafeStop}
-            onChange={(e) => onUpdateSettings({ batterySafeStop: e.target.checked })}
-          />
-          <span>Stop automatically below {settings.batteryThreshold}% battery</span>
-        </label>
-        <div className="diag-theme-row">
+        <SwitchRow
+          label={`Stop automatically below ${settings.batteryThreshold}% battery`}
+          checked={settings.batterySafeStop}
+          onChange={(batterySafeStop) => onUpdateSettings({ batterySafeStop })}
+        />
+        <div className={`diag-theme-row ${!settings.batterySafeStop ? "is-dimmed" : ""}`}>
           <span className="diag-k">BATTERY THRESHOLD</span>
           <div className="diag-theme-pills">
             {[5, 10, 15, 20].map((pct) => (
               <button
                 key={pct}
                 type="button"
+                disabled={!settings.batterySafeStop}
                 className={settings.batteryThreshold === pct ? "active" : ""}
                 onClick={() => onUpdateSettings({ batteryThreshold: pct })}
               >
@@ -159,42 +263,39 @@ export const DiagnosticsModal: React.FC<DiagnosticsModalProps> = ({
             ))}
           </div>
         </div>
-        <label className="diag-toggle">
-          <input
-            type="checkbox"
-            checked={settings.autoAwakeForAgents}
-            onChange={(e) => onUpdateSettings({ autoAwakeForAgents: e.target.checked })}
-          />
-          <span>Stay awake automatically while an agent is thinking</span>
-        </label>
-        <label className="diag-toggle">
-          <input
-            type="checkbox"
-            checked={settings.keepDisplay}
-            onChange={(e) => onUpdateSettings({ keepDisplay: e.target.checked })}
-          />
-          <span>Keep screen lit during awake sessions</span>
-        </label>
-        <label className="diag-toggle">
-          <input
-            type="checkbox"
-            checked={settings.keepAwakeWithLidClosed !== false}
-            onChange={(e) => onUpdateSettings({ keepAwakeWithLidClosed: e.target.checked })}
-          />
-          <span>Keep PC awake when laptop lid is closed</span>
-        </label>
-        <label className="diag-toggle">
-          <input
-            type="checkbox"
-            checked={Boolean(settings.keepAwakeOnLaunch)}
-            onChange={(e) => {
-              const checked = e.target.checked;
-              onUpdateSettings({ keepAwakeOnLaunch: checked });
-              if (checked) onStartQuick(null);
-            }}
-          />
-          <span>Keep PC awake all the time on launch (remote control)</span>
-        </label>
+        <SwitchRow
+          label="Stay awake automatically while an agent is thinking"
+          hint="Claude Code, Codex, and Antigravity"
+          checked={settings.autoAwakeForAgents}
+          onChange={(autoAwakeForAgents) => onUpdateSettings({ autoAwakeForAgents })}
+        />
+        <SwitchRow
+          label="Keep screen lit during awake sessions"
+          hint="Off lets your display sleep to save power"
+          checked={settings.keepDisplay}
+          onChange={(keepDisplay) => onUpdateSettings({ keepDisplay })}
+        />
+        <SwitchRow
+          label="Keep awake with lid closed (AC only, opt-in)"
+          hint="Restores on exit · Keep laptop on a ventilated flat surface"
+          checked={Boolean(settings.keepAwakeWithLidClosed)}
+          onChange={(keepAwakeWithLidClosed) => onUpdateSettings({ keepAwakeWithLidClosed })}
+        />
+        <SwitchRow
+          label="Start Nightowl with Windows"
+          hint="Runs quietly in your system tray at sign-in"
+          checked={Boolean(settings.openAtLogin)}
+          onChange={(openAtLogin) => onUpdateSettings({ openAtLogin })}
+        />
+        <SwitchRow
+          label="Start awake on launch"
+          hint="Useful for remote-controlled workstations"
+          checked={Boolean(settings.keepAwakeOnLaunch)}
+          onChange={(keepAwakeOnLaunch) => {
+            onUpdateSettings({ keepAwakeOnLaunch });
+            if (keepAwakeOnLaunch) onStartQuick(null);
+          }}
+        />
       </section>
 
       <section className="diag-card">
@@ -288,23 +389,17 @@ export const DiagnosticsModal: React.FC<DiagnosticsModalProps> = ({
           </div>
         </div>
 
-        <label className="diag-toggle">
-          <input
-            type="checkbox"
-            checked={showClock}
-            onChange={(e) => onUpdateSettings({ showClock: e.target.checked })}
-          />
-          <span>Show clock in capsule</span>
-        </label>
-        <label className="diag-toggle">
-          <input
-            type="checkbox"
-            checked={clock24}
-            disabled={!showClock}
-            onChange={(e) => onUpdateSettings({ clockFormat24h: e.target.checked })}
-          />
-          <span>Use 24-hour clock format</span>
-        </label>
+        <SwitchRow
+          label="Show clock in capsule"
+          checked={showClock}
+          onChange={(next) => onUpdateSettings({ showClock: next })}
+        />
+        <SwitchRow
+          label="Use 24-hour clock format"
+          checked={clock24}
+          disabled={!showClock}
+          onChange={(clockFormat24h) => onUpdateSettings({ clockFormat24h })}
+        />
 
         <div className="diag-theme-row">
           <span className="diag-k">THEME PRESET</span>
@@ -346,11 +441,16 @@ export const DiagnosticsModal: React.FC<DiagnosticsModalProps> = ({
                   <span className={`sess-badge sess-${s.harness}`}>
                     <HarnessIcon harness={s.harness} state={s.state} size={16} />
                   </span>
-                  <div>
+                  <div className="diag-sess-info">
                     <div className="diag-sess-name">{s.projectName}</div>
                     <div className="diag-sess-meta">
-                      {harnessDisplayName(s.harness)} · {s.state === "thinking" ? "Thinking..." : "Ready"}
+                      <span>{harnessDisplayName(s.harness)}</span>
+                      <span className="diag-sess-tag">{s.source === "cli" ? "CLI" : "Desktop"}</span>
+                      <span className={`diag-sess-state ${s.state === "thinking" ? "is-thinking" : ""}`}>
+                        {s.state === "thinking" ? "Thinking..." : "Ready"}
+                      </span>
                     </div>
+                    {s.preview && <div className="diag-sess-preview">{s.preview}</div>}
                   </div>
                 </div>
                 <button
@@ -365,6 +465,57 @@ export const DiagnosticsModal: React.FC<DiagnosticsModalProps> = ({
           </ul>
         )}
       </section>
+
+      <footer className="diag-footer">
+        <div className="diag-footer-left">
+          <button
+            type="button"
+            className="diag-link-btn"
+            disabled={checkingUpdate}
+            onClick={() => void handleCheckUpdates()}
+          >
+            {checkingUpdate ? "Checking..." : "Check for updates"}
+          </button>
+          <button
+            type="button"
+            className="diag-link-btn"
+            onClick={() => void handleCopyDiagnostics()}
+          >
+            {copiedDiag ? "Copied diagnostics" : "Copy diagnostics"}
+          </button>
+          {updateResult?.status === "update-available" && (
+            <button
+              type="button"
+              className="diag-link-btn is-accent"
+              onClick={() => void window.nightowl?.openExternal(updateResult.releaseUrl)}
+            >
+              Update v{updateResult.latestVersion} ↗
+            </button>
+          )}
+          {updateResult?.status === "up-to-date" && (
+            <span className="diag-update-note">Up to date ({versionLabel})</span>
+          )}
+          {updateResult?.status === "error" && (
+            <span className="diag-update-note">{updateResult.error}</span>
+          )}
+        </div>
+        <div className="diag-footer-links">
+          <button
+            type="button"
+            className="diag-text-link"
+            onClick={() => void window.nightowl?.openExternal("https://nightowl.sheif.org/docs/index.html")}
+          >
+            Docs
+          </button>
+          <button
+            type="button"
+            className="diag-text-link"
+            onClick={() => void window.nightowl?.openExternal("https://github.com/r-bug-r/nightowl")}
+          >
+            GitHub
+          </button>
+        </div>
+      </footer>
     </div>
   );
 };
